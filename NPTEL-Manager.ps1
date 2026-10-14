@@ -68,6 +68,11 @@ if (Test-Path $examVerModule) {
     . $examVerModule
 }
 
+$exportModule = Join-Path $appRoot "modules\Export-FinalResultSheet.ps1"
+if (Test-Path $exportModule) {
+    . $exportModule
+}
+
 # 2. State Storage (data/courses.json)
 $dataDir = Join-Path $appRoot "data"
 $script:dataDir = $dataDir
@@ -504,45 +509,56 @@ function New-CourseExamVerificationSheet {
 
 function Show-SheetGenerationErrorDialog {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$SheetTypeName,
+        [string]$SheetTypeName = "result sheet",
         [string]$TargetPath = "",
-        [Parameter(Mandatory = $true)]
-        $Exception
+        $Exception = $null,
+        [string]$LockedFileName = "",
+        [string]$CustomTitle = ""
     )
 
-    $fileName = if ($TargetPath) { [System.IO.Path]::GetFileName($TargetPath) } else { "" }
-    $exMsg = [string]$Exception.Message
-
-    $isLocked = $false
-    $lockedName = ""
-
-    if ($exMsg -match "FILE_LOCKED:(.+)") {
-        $isLocked = $true
-        $lockedName = $Matches[1].Trim()
-    } elseif ($TargetPath -and (Test-FileLocked -Path $TargetPath)) {
-        $isLocked = $true
-        $lockedName = $fileName
-    } elseif ($exMsg -match "Error saving file\s+([^""`'\r\n]+)") {
-        $isLocked = $true
-        $lockedName = [System.IO.Path]::GetFileName($Matches[1].Trim())
-    } elseif ($exMsg -match "being used by another process|is denied|The process cannot access the file") {
-        $isLocked = $true
-        $lockedName = if ($fileName) { $fileName } else { "the Excel sheet" }
+    $fileName = if ($LockedFileName) {
+        $LockedFileName
+    } elseif ($TargetPath) {
+        [System.IO.Path]::GetFileName($TargetPath)
+    } else {
+        ""
     }
+
+    $exMsg = if ($Exception) { [string]$Exception.Message } else { "" }
+
+    $isLocked = [bool]$LockedFileName
+    $lockedName = $LockedFileName
+
+    if (-not $isLocked) {
+        if ($exMsg -match "FILE_LOCKED:(.+)") {
+            $isLocked = $true
+            $lockedName = $Matches[1].Trim()
+        } elseif ($TargetPath -and (Test-FileLocked -Path $TargetPath)) {
+            $isLocked = $true
+            $lockedName = $fileName
+        } elseif ($exMsg -match "Error saving file\s+([^""`'\r\n]+)") {
+            $isLocked = $true
+            $lockedName = [System.IO.Path]::GetFileName($Matches[1].Trim())
+        } elseif ($exMsg -match "being used by another process|is denied|The process cannot access the file") {
+            $isLocked = $true
+            $lockedName = if ($fileName) { $fileName } else { "the Excel sheet" }
+        }
+    }
+
+    $title = if ($CustomTitle) { $CustomTitle } else { "Generation Error" }
 
     if ($isLocked) {
         if (-not $lockedName) { $lockedName = if ($fileName) { $fileName } else { "the Excel sheet" } }
         [System.Windows.MessageBox]::Show(
             "The $SheetTypeName cannot be saved because`n`"$lockedName`" is currently open.`n`nPlease close the file in Excel and try again.",
-            "Generation Error",
+            $title,
             [System.Windows.MessageBoxButton]::OK,
             [System.Windows.MessageBoxImage]::Warning
         )
     } else {
         [System.Windows.MessageBox]::Show(
             "Failed to generate the $SheetTypeName.`n`nPlease try again.`n`n(Details: $exMsg)",
-            "Generation Error",
+            $title,
             [System.Windows.MessageBoxButton]::OK,
             [System.Windows.MessageBoxImage]::Error
         )
@@ -1523,6 +1539,99 @@ function Update-Stage2View {
         if ($panelPrompt) { $panelPrompt.Visibility = [System.Windows.Visibility]::Visible }
         if ($panelActive) { $panelActive.Visibility = [System.Windows.Visibility]::Collapsed }
         if ($badgeVerStatus) { $badgeVerStatus.Visibility = [System.Windows.Visibility]::Collapsed }
+    }
+
+    # 7. Update Institutional Sheet Generator Panel State
+    # Sheet Generator is only available when the Result Verification Sheet exists for this course
+    $panelCollegeGen = $s2View.FindName("PanelCollegeSheetGenerator")
+    if ($panelCollegeGen) {
+        if (-not $vSheetExists) {
+            $panelCollegeGen.Visibility = [System.Windows.Visibility]::Collapsed
+            return
+        } else {
+            $panelCollegeGen.Visibility = [System.Windows.Visibility]::Visible
+        }
+    }
+
+    $collegeFile = Get-CourseCollegeResultSheetsFilePath -CourseId $Course.Id -CourseName $Course.Name
+    $hasCollegeFile = Test-Path -LiteralPath $collegeFile
+
+    $txtCollegePath = $s2View.FindName("TxtCollegeSheetsOutputPath")
+    if ($txtCollegePath) {
+        $txtCollegePath.Text = $collegeFile
+    }
+
+    $badgeCollegeStatus = $s2View.FindName("BadgeCollegeSheetsStatus")
+    $txtCollegeStatus = $s2View.FindName("TxtCollegeSheetsStatus")
+    $checkChar = [string][char]0x2713
+
+    if ($badgeCollegeStatus) {
+        if ($hasCollegeFile) {
+            $badgeCollegeStatus.BorderBrush = [System.Windows.Application]::Current.FindResource("SageBrush")
+            if ($txtCollegeStatus) {
+                $txtCollegeStatus.Text = "Sheets Ready $checkChar"
+                $txtCollegeStatus.Foreground = [System.Windows.Application]::Current.FindResource("SageBrush")
+            }
+        } else {
+            $badgeCollegeStatus.BorderBrush = [System.Windows.Application]::Current.FindResource("BorderBrush")
+            if ($txtCollegeStatus) {
+                $txtCollegeStatus.Text = "Not Generated"
+                $txtCollegeStatus.Foreground = [System.Windows.Application]::Current.FindResource("MutedBrush")
+            }
+        }
+    }
+
+    # Student counts on rows
+    $txtCWCount = $s2View.FindName("TxtCWStudentCount")
+    $txtEndSemCount = $s2View.FindName("TxtEndSemStudentCount")
+    $txtCumulativeCount = $s2View.FindName("TxtCumulativeStudentCount")
+    if (-not $txtCumulativeCount) { $txtCumulativeCount = $s2View.FindName("TxtNptelStudentCount") }
+
+    $dispVerCount = if ($hasSheet) { $verifiedCount } else { 0 }
+    if ($txtCWCount) { $txtCWCount.Text = "$dispVerCount Verified Students" }
+    if ($txtEndSemCount) { $txtEndSemCount.Text = "$dispVerCount Verified Students" }
+    if ($txtCumulativeCount) { $txtCumulativeCount.Text = "$dispVerCount Verified Students" }
+
+    # Row status badges
+    $txtCWStatus = $s2View.FindName("TxtCWStatus")
+    $txtEndSemStatus = $s2View.FindName("TxtEndSemStatus")
+    $txtCumulativeStatus = $s2View.FindName("TxtCumulativeStatus")
+    if (-not $txtCumulativeStatus) { $txtCumulativeStatus = $s2View.FindName("TxtNptelStatus") }
+
+    $badgeCW = $s2View.FindName("BadgeCWStatus")
+    $badgeEndSem = $s2View.FindName("BadgeEndSemStatus")
+    $badgeCumulative = $s2View.FindName("BadgeCumulativeStatus")
+    if (-not $badgeCumulative) { $badgeCumulative = $s2View.FindName("BadgeNptelStatus") }
+
+    $statusRowText = if ($hasCollegeFile) { "Ready $checkChar" } else { "Not Generated" }
+    $statusRowBrush = if ($hasCollegeFile) { [System.Windows.Application]::Current.FindResource("SageBrush") } else { [System.Windows.Application]::Current.FindResource("MutedBrush") }
+    $statusRowBorder = if ($hasCollegeFile) { [System.Windows.Application]::Current.FindResource("SageBrush") } else { [System.Windows.Application]::Current.FindResource("BorderBrush") }
+
+    if ($txtCWStatus) { $txtCWStatus.Text = $statusRowText; $txtCWStatus.Foreground = $statusRowBrush }
+    if ($badgeCW) { $badgeCW.BorderBrush = $statusRowBorder }
+
+    if ($txtEndSemStatus) { $txtEndSemStatus.Text = $statusRowText; $txtEndSemStatus.Foreground = $statusRowBrush }
+    if ($badgeEndSem) { $badgeEndSem.BorderBrush = $statusRowBorder }
+
+    if ($txtCumulativeStatus) { $txtCumulativeStatus.Text = $statusRowText; $txtCumulativeStatus.Foreground = $statusRowBrush }
+    if ($badgeCumulative) { $badgeCumulative.BorderBrush = $statusRowBorder }
+
+    # Enable or disable Open buttons (checks both separate files and consolidated file)
+    $btnOpenCW = $s2View.FindName("BtnOpenCWSheet")
+    $btnOpenEndSem = $s2View.FindName("BtnOpenEndSemSheet")
+    $btnOpenCumulative = $s2View.FindName("BtnOpenCumulativeSheet")
+    if (-not $btnOpenCumulative) { $btnOpenCumulative = $s2View.FindName("BtnOpenNptelSheet") }
+    $cwSep = Get-CourseCollegeSeparateSheetFilePath -CourseId $Course.Id -CourseName $Course.Name -SheetType 'CW'
+    $endSemSep = Get-CourseCollegeSeparateSheetFilePath -CourseId $Course.Id -CourseName $Course.Name -SheetType 'EndSem'
+    $cumulativeSep = Get-CourseCollegeSeparateSheetFilePath -CourseId $Course.Id -CourseName $Course.Name -SheetType 'Cumulative'
+    if ($btnOpenCW) { $btnOpenCW.IsEnabled = ($hasCollegeFile -or (Test-Path -LiteralPath $cwSep)) }
+    if ($btnOpenEndSem) { $btnOpenEndSem.IsEnabled = ($hasCollegeFile -or (Test-Path -LiteralPath $endSemSep)) }
+    if ($btnOpenCumulative) { $btnOpenCumulative.IsEnabled = ($hasCollegeFile -or (Test-Path -LiteralPath $cumulativeSep)) }
+
+    # Guidance banner (kept collapsed per user request for a clean panel)
+    $panelGuidance = $s2View.FindName("PanelCollegeSheetsGuidance")
+    if ($panelGuidance) {
+        $panelGuidance.Visibility = [System.Windows.Visibility]::Collapsed
     }
 }
 
@@ -2789,6 +2898,158 @@ function Update-ExamReviewView {
     }
 }
 
+# Helper: Toggle Edit Mode for Mode B Certificate Marks
+function Set-ExamCertMarksEditMode {
+    param(
+        $View,
+        [bool]$IsEditing,
+        [string]$ViewType,
+        $Student
+    )
+    if (-not $View) { return }
+
+    $pencilToken = [string][char]0x270E
+    $dash = [string][char]0x2014
+
+    if ($ViewType -eq "ExamReviewView") {
+        $btnToggle   = $View.FindName("BtnToggleEditCertMarksReview")
+        $txtAssign   = $View.FindName("TxtCmpCertAssign")
+        $txtExam     = $View.FindName("TxtCmpCertExam")
+        $txtTotal    = $View.FindName("TxtCmpCertTotal")
+        $panelAssign = $View.FindName("PanelEditCertAssignReview")
+        $panelExam   = $View.FindName("PanelEditCertExamReview")
+        $panelTotal  = $View.FindName("PanelEditCertTotalReview")
+        $panelActs   = $View.FindName("PanelEditCertActionsReview")
+        $inpAssign   = $View.FindName("InpEditCertAssignReview")
+        $inpExam     = $View.FindName("InpEditCertExamReview")
+        $inpTotal    = $View.FindName("InpEditCertTotalReview")
+        $inpReason   = $View.FindName("InpEditCertReasonReview")
+
+        if ($IsEditing) {
+            if ($txtAssign)   { $txtAssign.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($txtExam)     { $txtExam.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($txtTotal)    { $txtTotal.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelAssign) { $panelAssign.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelExam)   { $panelExam.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelTotal)  { $panelTotal.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelActs)   { $panelActs.Visibility = [System.Windows.Visibility]::Visible }
+            if ($btnToggle)   { $btnToggle.Content = "View Mode" }
+
+            if ($inpAssign -and $Student) {
+                $v = if ($Student.VerifiedAssignmentMarks) { [string]$Student.VerifiedAssignmentMarks } elseif ($Student.DeclaredAssignmentMarks) { [string]$Student.DeclaredAssignmentMarks } else { "" }
+                $inpAssign.Text = $v
+                $inpAssign.Focus() | Out-Null
+            }
+            if ($inpExam -and $Student) {
+                $v = if ($Student.VerifiedExamMarks) { [string]$Student.VerifiedExamMarks } elseif ($Student.DeclaredExamMarks) { [string]$Student.DeclaredExamMarks } else { "" }
+                $inpExam.Text = $v
+            }
+            if ($inpTotal -and $Student) {
+                $v = if ($Student.VerifiedTotalMarks) { [string]$Student.VerifiedTotalMarks } elseif ($Student.DeclaredTotalMarks) { [string]$Student.DeclaredTotalMarks } else { "" }
+                $inpTotal.Text = $v
+            }
+            if ($inpReason) { $inpReason.Text = "" }
+        } else {
+            if ($txtAssign)   { $txtAssign.Visibility = [System.Windows.Visibility]::Visible }
+            if ($txtExam)     { $txtExam.Visibility = [System.Windows.Visibility]::Visible }
+            if ($txtTotal)    { $txtTotal.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelAssign) { $panelAssign.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelExam)   { $panelExam.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelTotal)  { $panelTotal.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelActs)   { $panelActs.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($btnToggle)   { $btnToggle.Content = "$pencilToken Edit Certificate Marks" }
+        }
+    } elseif ($ViewType -eq "ExamVerifiedView") {
+        $btnToggle   = $View.FindName("BtnToggleEditCertMarksVerified")
+        $txtAssign   = $View.FindName("TxtExamVerifiedCertAssign")
+        $panelExamV  = $View.FindName("PanelExamVerifiedCertExamView")
+        $txtTotal    = $View.FindName("TxtExamVerifiedCertTotal")
+        $panelAssign = $View.FindName("PanelEditCertAssignVerified")
+        $panelExam   = $View.FindName("PanelEditCertExamVerified")
+        $panelTotal  = $View.FindName("PanelEditCertTotalVerified")
+        $panelActs   = $View.FindName("PanelEditCertActionsVerified")
+        $inpAssign   = $View.FindName("InpEditCertAssignVerified")
+        $inpExam     = $View.FindName("InpEditCertExamVerified")
+        $inpTotal    = $View.FindName("InpEditCertTotalVerified")
+        $inpReason   = $View.FindName("InpEditCertReasonVerified")
+
+        if ($IsEditing) {
+            if ($txtAssign)   { $txtAssign.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelExamV)  { $panelExamV.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($txtTotal)    { $txtTotal.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelAssign) { $panelAssign.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelExam)   { $panelExam.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelTotal)  { $panelTotal.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelActs)   { $panelActs.Visibility = [System.Windows.Visibility]::Visible }
+            if ($btnToggle)   { $btnToggle.Content = "View Mode" }
+
+            if ($inpAssign -and $Student) {
+                $inpAssign.Text = if ($Student.VerifiedAssignmentMarks) { [string]$Student.VerifiedAssignmentMarks } else { "" }
+                $inpAssign.Focus() | Out-Null
+            }
+            if ($inpExam -and $Student) {
+                $inpExam.Text = if ($Student.VerifiedExamMarks) { [string]$Student.VerifiedExamMarks } else { "" }
+            }
+            if ($inpTotal -and $Student) {
+                $inpTotal.Text = if ($Student.VerifiedTotalMarks) { [string]$Student.VerifiedTotalMarks } else { "" }
+            }
+            if ($inpReason) { $inpReason.Text = "" }
+        } else {
+            if ($txtAssign)   { $txtAssign.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelExamV)  { $panelExamV.Visibility = [System.Windows.Visibility]::Visible }
+            if ($txtTotal)    { $txtTotal.Visibility = [System.Windows.Visibility]::Visible }
+            if ($panelAssign) { $panelAssign.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelExam)   { $panelExam.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelTotal)  { $panelTotal.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($panelActs)   { $panelActs.Visibility = [System.Windows.Visibility]::Collapsed }
+            if ($btnToggle)   { $btnToggle.Content = "$pencilToken Edit Certificate Marks" }
+        }
+    }
+}
+
+# Helper: Validate Manual Marks Inputs
+function Test-ExamCertMarksInputs {
+    param(
+        [string]$RawAssign,
+        [string]$RawExam,
+        [string]$RawTotal
+    )
+    $cleanAssign = ($RawAssign + "").Trim()
+    $cleanExam   = ($RawExam + "").Trim()
+    $cleanTotal  = ($RawTotal + "").Trim()
+
+    if (-not $cleanAssign) {
+        return @{ IsValid = $false; Error = "Assignment marks cannot be blank. Enter a number between 0 and 25." }
+    }
+    [double]$valAssign = 0
+    if (-not [double]::TryParse($cleanAssign, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$valAssign) -or $valAssign -lt 0 -or $valAssign -gt 25) {
+        return @{ IsValid = $false; Error = "Assignment marks '$cleanAssign' is invalid. Must be a number between 0 and 25 (e.g. 24.63)." }
+    }
+
+    if (-not $cleanExam) {
+        return @{ IsValid = $false; Error = "Exam marks cannot be blank. Enter a number between 0 and 75." }
+    }
+    [double]$valExam = 0
+    if (-not [double]::TryParse($cleanExam, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$valExam) -or $valExam -lt 0 -or $valExam -gt 75) {
+        return @{ IsValid = $false; Error = "Exam marks '$cleanExam' is invalid. Must be a number between 0 and 75 (e.g. 43.42)." }
+    }
+
+    if (-not $cleanTotal) {
+        return @{ IsValid = $false; Error = "Total marks cannot be blank. Enter a number between 0 and 100." }
+    }
+    [double]$valTotal = 0
+    if (-not [double]::TryParse($cleanTotal, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$valTotal) -or $valTotal -lt 0 -or $valTotal -gt 100) {
+        return @{ IsValid = $false; Error = "Total marks '$cleanTotal' is invalid. Must be a number between 0 and 100 (e.g. 68)." }
+    }
+
+    return @{
+        IsValid = $true
+        Assign  = $valAssign
+        Exam    = $valExam
+        Total   = $valTotal
+    }
+}
+
 function Show-ExamStudentReviewDetails {
     param(
         $Student
@@ -2931,6 +3192,9 @@ function Show-ExamStudentReviewDetails {
     # 5. Attachment button tag
     $btnAttach = $erv.FindName("BtnAttachLocalExamCert")
     if ($btnAttach) { $btnAttach.Tag = $Student }
+
+    # 5b. Reset Certificate Marks Edit Mode to View state
+    Set-ExamCertMarksEditMode -View $erv -IsEditing $false -ViewType "ExamReviewView" -Student $Student
 
     # 6. Load & Display Certificate Image in Zoom Viewer
     $imgCert = $erv.FindName("ImgExamCertViewer")
@@ -3638,6 +3902,9 @@ function Show-ExamVerifiedStudentDetails {
     }
     if ($txtCertRoll)    { $txtCertRoll.Text    = if ($Student.CertificateRollNo) { [string]$Student.CertificateRollNo } else { "$dash" } }
     if ($txtCertCredits) { $txtCertCredits.Text = if ($Student.Credits) { "$($Student.Credits) Credits" } else { "$dash" } }
+
+    # Reset Certificate Marks Edit Mode to View state
+    Set-ExamCertMarksEditMode -View $evv -IsEditing $false -ViewType "ExamVerifiedView" -Student $Student
 
     # 5. Submission record
     $txtEmail = $evv.FindName("TxtExamVerifiedDetailEmail")
@@ -4353,6 +4620,122 @@ function Update-ExamPipelineBarState {
     }
 }
 
+# 9b. Institutional College Sheet Preview Modal State & Filter
+function Show-CollegeSheetPreviewModal {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('CW', 'EndSem', 'End sem', 'End Sem', 'Cumulative', 'Cumulative Sheet', 'Main Result', 'Nptel', 'NPTEL', 'Nptel Sheet')]
+        [string]$SheetType
+    )
+
+    if (-not $script:activeCourse) { return }
+    $s2View = $script:views["Stage2View"]
+    if (-not $s2View) { return }
+
+    $modal = $s2View.FindName("CollegeSheetPreviewModal")
+    if (-not $modal) { return }
+
+    $sessionVal = if ($script:activeCourse.Session) { [string]$script:activeCourse.Session } else { "Jan-June 2026" }
+    $data = Get-CourseCollegeSheetData -Course $script:activeCourse -SheetType $SheetType -SessionName $sessionVal
+    if (-not $data) { return }
+
+    $script:activeCollegePreviewData = $data.Rows
+    $script:activeCollegePreviewSheetType = $SheetType
+
+    # Update modal headers
+    $txtTitle = $s2View.FindName("TxtCollegePreviewTitle")
+    $txtSubtitle = $s2View.FindName("TxtCollegePreviewSubtitle")
+    $txtH1 = $s2View.FindName("TxtCollegePreviewHeader1")
+    $txtH2 = $s2View.FindName("TxtCollegePreviewHeader2")
+    $txtH3 = $s2View.FindName("TxtCollegePreviewHeader3")
+    $txtRowCount = $s2View.FindName("TxtCollegePreviewRowCount")
+    $inpSearch = $s2View.FindName("InpSearchCollegePreview")
+
+    if ($txtTitle) { $txtTitle.Text = $data.Title }
+    if ($txtSubtitle) { $txtSubtitle.Text = $data.Subtitle }
+    if ($txtH1) { $txtH1.Text = $data.Header1 }
+    if ($txtH2) { $txtH2.Text = $data.Header2 }
+    if ($txtH3) { $txtH3.Text = $data.Header3 }
+    if ($txtRowCount) { $txtRowCount.Text = "$($data.Rows.Count) records" }
+    if ($inpSearch) { $inpSearch.Text = "" }
+
+    $grid = $s2View.FindName("DataGridCollegePreview")
+    if ($grid) {
+        $grid.ItemsSource = $data.Rows
+    }
+
+    $modal.Visibility = [System.Windows.Visibility]::Visible
+}
+
+function Filter-CollegeSheetPreview {
+    param([string]$Query)
+
+    $s2View = $script:views["Stage2View"]
+    if (-not $s2View) { return }
+    $grid = $s2View.FindName("DataGridCollegePreview")
+    $txtCount = $s2View.FindName("TxtCollegePreviewRowCount")
+
+    if (-not $script:activeCollegePreviewData) { return }
+
+    if ([string]::IsNullOrWhiteSpace($Query)) {
+        if ($grid) { $grid.ItemsSource = $script:activeCollegePreviewData }
+        if ($txtCount) { $txtCount.Text = "$($script:activeCollegePreviewData.Count) records" }
+        return
+    }
+
+    $cleanQ = $Query.Trim().ToLower()
+    $filtered = [System.Collections.ArrayList]@()
+    foreach ($row in $script:activeCollegePreviewData) {
+        $r = [string]$row.'Enrollment number'
+        if (-not $r) { $r = [string]$row.Enrollment }
+        $n = [string]$row.Name
+        if (($r -and $r.ToLower().Contains($cleanQ)) -or ($n -and $n.ToLower().Contains($cleanQ))) {
+            $null = $filtered.Add($row)
+        }
+    }
+
+    if ($grid) { $grid.ItemsSource = $filtered }
+    if ($txtCount) { $txtCount.Text = "$($filtered.Count) of $($script:activeCollegePreviewData.Count) records" }
+}
+
+function Open-CourseCollegeSheetFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('CW', 'EndSem', 'Cumulative', 'Cumulative Sheet', 'Main Result', 'Nptel', 'End sem', 'End Sem', 'Nptel Sheet', 'NPTEL', 'All')]
+        [string]$SheetType
+    )
+
+    if (-not $script:activeCourse) { return }
+
+    $targetToOpen = $null
+    if ($SheetType -eq 'All') {
+        $cFile = Get-CourseCollegeResultSheetsFilePath -CourseId $script:activeCourse.Id -CourseName $script:activeCourse.Name
+        if (Test-Path -LiteralPath $cFile) {
+            $targetToOpen = $cFile
+        }
+    } else {
+        $sepFile = Get-CourseCollegeSeparateSheetFilePath -CourseId $script:activeCourse.Id -CourseName $script:activeCourse.Name -SheetType $SheetType
+        $cFile   = Get-CourseCollegeResultSheetsFilePath -CourseId $script:activeCourse.Id -CourseName $script:activeCourse.Name
+        if (Test-Path -LiteralPath $sepFile) {
+            $targetToOpen = $sepFile
+        } elseif (Test-Path -LiteralPath $cFile) {
+            $targetToOpen = $cFile
+        }
+    }
+
+    if ($targetToOpen) {
+        Invoke-Item -LiteralPath $targetToOpen
+    } else {
+        [System.Windows.MessageBox]::Show(
+            "This sheet has not been generated yet. Click [Sync] or [Generate All Sheets] first.",
+            "File Not Found",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information
+        )
+    }
+}
+
 # 10. Wire Events per View (Using dynamic lookups to prevent scope closure loss)
 function Wire-ViewEvents {
     param([string]$ViewName, $viewObj)
@@ -4450,6 +4833,11 @@ function Wire-ViewEvents {
                         Id = [Guid]::NewGuid().ToString()
                         Name = $name
                         Code = if ($txtCourseCode -and $txtCourseCode.Text) { $txtCourseCode.Text.Trim() } else { "" }
+                        CollegeName = "SHRI G. S. INSTITUTE OF TECHNOLOGY & SCIENCE, INDORE"
+                        Session = "Jan-June 2026"
+                        AcademicYear = "IV YEAR"
+                        ElectiveType = "Elective VI"
+                        HeaderTag = "(NPTEL)"
                         Department = if ($txtDepartment -and $txtDepartment.Text) { $txtDepartment.Text.Trim() } else { "" }
                         Semester = if ($txtSemester -and $txtSemester.Text) { $txtSemester.Text.Trim() } else { "" }
                         RegistrationSheet = if ($txtSheet -and $txtSheet.Text) { $txtSheet.Text.Trim() } else { "" }
@@ -5987,6 +6375,454 @@ function Wire-ViewEvents {
                     Open-ExamVerifiedView
                 })
             }
+
+            # ─────────────────────────────────────────────────────────────
+            # 0. Configure Sheet Header Info Modal
+            $btnEditHeader = $viewObj.FindName("BtnEditCollegeHeaderInfo")
+            if ($btnEditHeader) {
+                $btnEditHeader.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    $s2v = $script:views["Stage2View"]
+                    if (-not $s2v) { return }
+
+                    $modal = $s2v.FindName("ModalEditCollegeHeaderInfo")
+                    if (-not $modal) { return }
+
+                    $inpCollege  = $s2v.FindName("InpHeaderCollegeName")
+                    $inpSession  = $s2v.FindName("InpHeaderSession")
+                    $inpYear     = $s2v.FindName("InpHeaderYear")
+                    $inpElective = $s2v.FindName("InpHeaderElective")
+                    $inpCode     = $s2v.FindName("InpHeaderCode")
+                    $inpName     = $s2v.FindName("InpHeaderName")
+                    $inpTag      = $s2v.FindName("InpHeaderTag")
+
+                    $curCollege  = if ($script:activeCourse.CollegeName) { [string]$script:activeCourse.CollegeName } else { "SHRI G. S. INSTITUTE OF TECHNOLOGY & SCIENCE, INDORE" }
+                    $curSession  = if ($script:activeCourse.Session) { [string]$script:activeCourse.Session } else { "Jan-June 2026" }
+                    $curYear     = if ($script:activeCourse.AcademicYear) { [string]$script:activeCourse.AcademicYear } else {
+                        $semInt = 8
+                        if ($script:activeCourse.Semester) { [int]::TryParse([string]$script:activeCourse.Semester, [ref]$semInt) | Out-Null }
+                        switch ($semInt) {
+                            { $_ -in 7, 8 } { "IV YEAR" }
+                            { $_ -in 5, 6 } { "III YEAR" }
+                            { $_ -in 3, 4 } { "II YEAR" }
+                            { $_ -in 1, 2 } { "I YEAR" }
+                            default         { "IV YEAR" }
+                        }
+                    }
+                    $curElective = if ($script:activeCourse.ElectiveType) { [string]$script:activeCourse.ElectiveType } else { "Elective VI" }
+                    $curCode     = if ($script:activeCourse.Code) { [string]$script:activeCourse.Code } else { "" }
+                    $curName     = if ($script:activeCourse.Name) { [string]$script:activeCourse.Name } else { "" }
+                    $curTag      = if ($script:activeCourse.HeaderTag) { [string]$script:activeCourse.HeaderTag } else { "(NPTEL)" }
+
+                    if ($inpCollege)  { $inpCollege.Text  = $curCollege }
+                    if ($inpSession)  { $inpSession.Text  = $curSession }
+                    if ($inpYear)     { $inpYear.Text     = $curYear }
+                    if ($inpElective) { $inpElective.Text = $curElective }
+                    if ($inpCode)     { $inpCode.Text     = $curCode }
+                    if ($inpName)     { $inpName.Text     = $curName }
+                    if ($inpTag)      { $inpTag.Text      = $curTag }
+
+                    $pRow1 = $s2v.FindName("TxtHeaderModalPreviewRow1")
+                    $pRow2 = $s2v.FindName("TxtHeaderModalPreviewRow2")
+                    $pRow3 = $s2v.FindName("TxtHeaderModalPreviewRow3")
+                    $codeSp = if ($curCode) { "$curCode " } else { "" }
+                    $tagSp  = if ($curTag) { " $curTag" } else { "" }
+                    if ($pRow1) { $pRow1.Text = $curCollege }
+                    if ($pRow2) { $pRow2.Text = "SESSION : $curSession" }
+                    if ($pRow3) { $pRow3.Text = "$curYear CW  $curElective  ${codeSp}${curName}${tagSp}" }
+
+                    $modal.Visibility = [System.Windows.Visibility]::Visible
+                })
+            }
+
+            # Live preview update listener
+            $updateModalPreviewAction = {
+                $s2v = $script:views["Stage2View"]
+                if (-not $s2v) { return }
+                $inpCollege  = $s2v.FindName("InpHeaderCollegeName")
+                $inpSession  = $s2v.FindName("InpHeaderSession")
+                $inpYear     = $s2v.FindName("InpHeaderYear")
+                $inpElective = $s2v.FindName("InpHeaderElective")
+                $inpCode     = $s2v.FindName("InpHeaderCode")
+                $inpName     = $s2v.FindName("InpHeaderName")
+                $inpTag      = $s2v.FindName("InpHeaderTag")
+                $pRow1       = $s2v.FindName("TxtHeaderModalPreviewRow1")
+                $pRow2       = $s2v.FindName("TxtHeaderModalPreviewRow2")
+                $pRow3       = $s2v.FindName("TxtHeaderModalPreviewRow3")
+
+                $colVal = if ($inpCollege -and $inpCollege.Text) { $inpCollege.Text.Trim() } else { "SHRI G. S. INSTITUTE OF TECHNOLOGY & SCIENCE, INDORE" }
+                $sVal   = if ($inpSession -and $inpSession.Text) { $inpSession.Text.Trim() } else { "Jan-June 2026" }
+                $yVal   = if ($inpYear -and $inpYear.Text) { $inpYear.Text.Trim() } else { "IV YEAR" }
+                $eVal   = if ($inpElective -and $inpElective.Text) { $inpElective.Text.Trim() } else { "Elective VI" }
+                $cVal   = if ($inpCode -and $inpCode.Text) { $inpCode.Text.Trim() + " " } else { "" }
+                $nVal   = if ($inpName -and $inpName.Text) { $inpName.Text.Trim() } else { "Course" }
+                $tVal   = if ($inpTag -and $inpTag.Text) { " " + $inpTag.Text.Trim() } else { "" }
+
+                if ($pRow1) { $pRow1.Text = $colVal }
+                if ($pRow2) { $pRow2.Text = "SESSION : $sVal" }
+                if ($pRow3) { $pRow3.Text = "$yVal CW  $eVal  ${cVal}${nVal}${tVal}" }
+            }
+
+            $inpCollegeObj  = $viewObj.FindName("InpHeaderCollegeName")
+            $inpSessionObj  = $viewObj.FindName("InpHeaderSession")
+            $inpYearObj     = $viewObj.FindName("InpHeaderYear")
+            $inpElectiveObj = $viewObj.FindName("InpHeaderElective")
+            $inpCodeObj     = $viewObj.FindName("InpHeaderCode")
+            $inpNameObj     = $viewObj.FindName("InpHeaderName")
+            $inpTagObj      = $viewObj.FindName("InpHeaderTag")
+
+            if ($inpCollegeObj)  { $inpCollegeObj.Add_TextChanged($updateModalPreviewAction) }
+            if ($inpSessionObj)  { $inpSessionObj.Add_TextChanged($updateModalPreviewAction) }
+            if ($inpYearObj)     { $inpYearObj.Add_TextChanged($updateModalPreviewAction) }
+            if ($inpElectiveObj) { $inpElectiveObj.Add_TextChanged($updateModalPreviewAction) }
+            if ($inpCodeObj)     { $inpCodeObj.Add_TextChanged($updateModalPreviewAction) }
+            if ($inpNameObj)     { $inpNameObj.Add_TextChanged($updateModalPreviewAction) }
+            if ($inpTagObj)      { $inpTagObj.Add_TextChanged($updateModalPreviewAction) }
+
+            # Close & Cancel Header Info Modal
+            $closeHeaderModalAction = {
+                $s2v = $script:views["Stage2View"]
+                if ($s2v) {
+                    $m = $s2v.FindName("ModalEditCollegeHeaderInfo")
+                    if ($m) { $m.Visibility = [System.Windows.Visibility]::Collapsed }
+                }
+            }
+            $btnCloseHdrTop = $viewObj.FindName("BtnCloseCollegeHeaderInfoModal")
+            if ($btnCloseHdrTop) { $btnCloseHdrTop.Add_Click($closeHeaderModalAction) }
+
+            $btnCancelHdr = $viewObj.FindName("BtnCancelCollegeHeaderInfo")
+            if ($btnCancelHdr) { $btnCancelHdr.Add_Click($closeHeaderModalAction) }
+
+            # Save Header Info
+            $btnSaveHdr = $viewObj.FindName("BtnSaveCollegeHeaderInfo")
+            if ($btnSaveHdr) {
+                $btnSaveHdr.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    $s2v = $script:views["Stage2View"]
+                    if (-not $s2v) { return }
+
+                    $inpCollege  = $s2v.FindName("InpHeaderCollegeName")
+                    $inpSession  = $s2v.FindName("InpHeaderSession")
+                    $inpYear     = $s2v.FindName("InpHeaderYear")
+                    $inpElective = $s2v.FindName("InpHeaderElective")
+                    $inpCode     = $s2v.FindName("InpHeaderCode")
+                    $inpName     = $s2v.FindName("InpHeaderName")
+                    $inpTag      = $s2v.FindName("InpHeaderTag")
+
+                    $newCollege  = if ($inpCollege)  { $inpCollege.Text.Trim() }  else { "" }
+                    $newSession  = if ($inpSession)  { $inpSession.Text.Trim() }  else { "" }
+                    $newYear     = if ($inpYear)     { $inpYear.Text.Trim() }     else { "" }
+                    $newElective = if ($inpElective) { $inpElective.Text.Trim() } else { "" }
+                    $newCode     = if ($inpCode)     { $inpCode.Text.Trim() }     else { "" }
+                    $newName     = if ($inpName)     { $inpName.Text.Trim() }     else { "" }
+                    $newTag      = if ($inpTag)      { $inpTag.Text.Trim() }      else { "" }
+
+                    if (-not $newCollege) {
+                        [System.Windows.MessageBox]::Show("Please enter a College / Institution Name.", "College Name Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                        return
+                    }
+                    if (-not $newSession) {
+                        [System.Windows.MessageBox]::Show("Please enter an Academic Session (e.g. Jan-June 2026).", "Session Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                        return
+                    }
+                    if (-not $newYear) {
+                        [System.Windows.MessageBox]::Show("Please enter an Academic Year (e.g. IV YEAR).", "Academic Year Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                        return
+                    }
+
+                    # Update active course properties
+                    if ($script:activeCourse.PSObject.Properties['CollegeName']) {
+                        $script:activeCourse.CollegeName = $newCollege
+                    } else {
+                        $script:activeCourse | Add-Member -NotePropertyName 'CollegeName' -NotePropertyValue $newCollege -Force
+                    }
+
+                    if ($script:activeCourse.PSObject.Properties['Session']) {
+                        $script:activeCourse.Session = $newSession
+                    } else {
+                        $script:activeCourse | Add-Member -NotePropertyName 'Session' -NotePropertyValue $newSession -Force
+                    }
+
+                    if ($script:activeCourse.PSObject.Properties['AcademicYear']) {
+                        $script:activeCourse.AcademicYear = $newYear
+                    } else {
+                        $script:activeCourse | Add-Member -NotePropertyName 'AcademicYear' -NotePropertyValue $newYear -Force
+                    }
+
+                    if ($script:activeCourse.PSObject.Properties['ElectiveType']) {
+                        $script:activeCourse.ElectiveType = $newElective
+                    } else {
+                        $script:activeCourse | Add-Member -NotePropertyName 'ElectiveType' -NotePropertyValue $newElective -Force
+                    }
+
+                    if ($script:activeCourse.PSObject.Properties['HeaderTag']) {
+                        $script:activeCourse.HeaderTag = $newTag
+                    } else {
+                        $script:activeCourse | Add-Member -NotePropertyName 'HeaderTag' -NotePropertyValue $newTag -Force
+                    }
+
+                    if ($newCode) { $script:activeCourse.Code = $newCode }
+                    if ($newName) { $script:activeCourse.Name = $newName }
+
+                    # Persist changes to courses.json
+                    Save-Courses
+
+                    # Close modal
+                    $modal = $s2v.FindName("ModalEditCollegeHeaderInfo")
+                    if ($modal) { $modal.Visibility = [System.Windows.Visibility]::Collapsed }
+
+                    # Refresh Stage 2 View
+                    Update-Stage2View -Course $script:activeCourse
+
+                    [System.Windows.MessageBox]::Show(
+                        "Institutional header information updated successfully for '$($script:activeCourse.Name)'!`n`nClick [Generate All Sheets] or [Sync] to update the Excel sheets with the new header.",
+                        "Header Info Saved",
+                        [System.Windows.MessageBoxButton]::OK,
+                        [System.Windows.MessageBoxImage]::Information
+                    )
+                })
+            }
+
+            # 1. Generate All Sheets Toolbar Button
+            $btnGenAllCollege = $viewObj.FindName("BtnGenerateAllCollegeSheets")
+            if ($btnGenAllCollege) {
+                $btnGenAllCollege.Add_Click({
+                    if (-not $script:activeCourse) {
+                        [System.Windows.MessageBox]::Show(
+                            "Please select a course first before generating result sheets.",
+                            "No Active Course",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Information
+                        )
+                        return
+                    }
+
+                    $vSheetPath = if ($script:activeCourse.ExamVerificationSheet) { [string]$script:activeCourse.ExamVerificationSheet } else { "" }
+                    if (-not $vSheetPath -or -not (Test-Path -LiteralPath $vSheetPath -ErrorAction SilentlyContinue)) {
+                        [System.Windows.MessageBox]::Show(
+                            "Result Verification Sheet has not been generated for '$($script:activeCourse.Name)'.`nPlease generate the Result Verification Sheet first.",
+                            "Verification Sheet Required",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Warning
+                        )
+                        return
+                    }
+
+                    $origCursor = [System.Windows.Input.Mouse]::OverrideCursor
+                    try {
+                        [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
+                        $sessionVal = if ($script:activeCourse.Session) { [string]$script:activeCourse.Session } else { "Jan-June 2026" }
+                        $res = Export-CourseCollegeResultSheets -Course $script:activeCourse -SessionName $sessionVal
+                        if ($res.Success) {
+                            Update-Stage2View -Course $script:activeCourse
+                            $fName = [System.IO.Path]::GetFileName($res.FilePath)
+                            $prompt = [System.Windows.MessageBox]::Show(
+                                "Official Final Result Sheets Generated Successfully!`n`n" +
+                                "File: $fName`n" +
+                                "Verified Students Included: $($res.VerifiedCount)`n" +
+                                "Under Review Students Pending: $($res.UnderReviewCount)`n" +
+                                "Worksheets: $($res.GeneratedSheets -join ', ')`n`n" +
+                                "Would you like to open the generated workbook in Microsoft Excel now?",
+                                "Final Result Sheets Ready",
+                                [System.Windows.MessageBoxButton]::YesNo,
+                                [System.Windows.MessageBoxImage]::Information
+                            )
+                            if ($prompt -eq [System.Windows.MessageBoxResult]::Yes) {
+                                Invoke-Item -LiteralPath $res.FilePath
+                            }
+                        } else {
+                            if ($res.Error -match "FILE_LOCKED:(.+)") {
+                                Show-SheetGenerationErrorDialog -LockedFileName $matches[1] -CustomTitle "Result Sheets Locked" -SheetTypeName "result sheets"
+                            } else {
+                                [System.Windows.MessageBox]::Show(
+                                    "Failed to generate final result sheets:`n$($res.Error)",
+                                    "Generation Error",
+                                    [System.Windows.MessageBoxButton]::OK,
+                                    [System.Windows.MessageBoxImage]::Error
+                                )
+                            }
+                        }
+                    } finally {
+                        [System.Windows.Input.Mouse]::OverrideCursor = $origCursor
+                    }
+                })
+            }
+
+            # 2. Open Output Directory in Explorer
+            $btnOpenCollegeFld = $viewObj.FindName("BtnOpenCollegeFolder")
+            if ($btnOpenCollegeFld) {
+                $btnOpenCollegeFld.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    $cFile = Get-CourseCollegeResultSheetsFilePath -CourseId $script:activeCourse.Id -CourseName $script:activeCourse.Name
+                    $folder = [System.IO.Path]::GetDirectoryName($cFile)
+                    if (Test-Path -LiteralPath $cFile) {
+                        Start-Process "explorer.exe" -ArgumentList "/select,`"$cFile`""
+                    } elseif (Test-Path -LiteralPath $folder) {
+                        Start-Process "explorer.exe" -ArgumentList "`"$folder`""
+                    } else {
+                        [System.Windows.MessageBox]::Show(
+                            "Result sheets have not been generated yet. Click [Generate All Sheets] to create them.",
+                            "Notice",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Information
+                        )
+                    }
+                })
+            }
+
+            # 3. Row-Level View Buttons (In-App Preview Modal)
+            $btnViewCW = $viewObj.FindName("BtnViewCWSheet")
+            if ($btnViewCW) {
+                $btnViewCW.Add_Click({ Show-CollegeSheetPreviewModal -SheetType 'CW' })
+            }
+
+            $btnViewEndSem = $viewObj.FindName("BtnViewEndSemSheet")
+            if ($btnViewEndSem) {
+                $btnViewEndSem.Add_Click({ Show-CollegeSheetPreviewModal -SheetType 'EndSem' })
+            }
+
+            $btnViewCumulative = $viewObj.FindName("BtnViewCumulativeSheet")
+            if (-not $btnViewCumulative) { $btnViewCumulative = $viewObj.FindName("BtnViewNptelSheet") }
+            if ($btnViewCumulative) {
+                $btnViewCumulative.Add_Click({ Show-CollegeSheetPreviewModal -SheetType 'Cumulative' })
+            }
+
+            # 4. Row-Level Open Buttons (System Excel Launcher)
+            $btnOpenCW = $viewObj.FindName("BtnOpenCWSheet")
+            if ($btnOpenCW) { $btnOpenCW.Add_Click({ Open-CourseCollegeSheetFile -SheetType 'CW' }) }
+
+            $btnOpenEndSem = $viewObj.FindName("BtnOpenEndSemSheet")
+            if ($btnOpenEndSem) { $btnOpenEndSem.Add_Click({ Open-CourseCollegeSheetFile -SheetType 'EndSem' }) }
+
+            $btnOpenCumulative = $viewObj.FindName("BtnOpenCumulativeSheet")
+            if (-not $btnOpenCumulative) { $btnOpenCumulative = $viewObj.FindName("BtnOpenNptelSheet") }
+            if ($btnOpenCumulative) { $btnOpenCumulative.Add_Click({ Open-CourseCollegeSheetFile -SheetType 'Cumulative' }) }
+
+            # 5. Row-Level Sync Buttons
+            $btnSyncCW = $viewObj.FindName("BtnSyncCWSheet")
+            if ($btnSyncCW) {
+                $btnSyncCW.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    $vSheetPath = if ($script:activeCourse.ExamVerificationSheet) { [string]$script:activeCourse.ExamVerificationSheet } else { "" }
+                    if (-not $vSheetPath -or -not (Test-Path -LiteralPath $vSheetPath -ErrorAction SilentlyContinue)) { return }
+                    $origCursor = [System.Windows.Input.Mouse]::OverrideCursor
+                    try {
+                        [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
+                        $sessionVal = if ($script:activeCourse.Session) { [string]$script:activeCourse.Session } else { "Jan-June 2026" }
+                        $res = Export-CourseCollegeResultSheets -Course $script:activeCourse -TargetSheet 'CW' -SessionName $sessionVal
+                        if ($res.Success) {
+                            Update-Stage2View -Course $script:activeCourse
+                            [System.Windows.MessageBox]::Show(
+                                "Course Work (CW) Sheet synchronized successfully!`n`nVerified Students Included: $($res.VerifiedCount)",
+                                "Sheet Synchronized",
+                                [System.Windows.MessageBoxButton]::OK,
+                                [System.Windows.MessageBoxImage]::Information
+                            )
+                        } else {
+                            if ($res.Error -match "FILE_LOCKED:(.+)") {
+                                Show-SheetGenerationErrorDialog -LockedFileName $matches[1] -CustomTitle "CW Sheet Locked" -SheetTypeName "CW sheet"
+                            } else {
+                                [System.Windows.MessageBox]::Show("Sync failed: $($res.Error)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+                            }
+                        }
+                    } finally {
+                        [System.Windows.Input.Mouse]::OverrideCursor = $origCursor
+                    }
+                })
+            }
+
+            $btnSyncEndSem = $viewObj.FindName("BtnSyncEndSemSheet")
+            if ($btnSyncEndSem) {
+                $btnSyncEndSem.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    $vSheetPath = if ($script:activeCourse.ExamVerificationSheet) { [string]$script:activeCourse.ExamVerificationSheet } else { "" }
+                    if (-not $vSheetPath -or -not (Test-Path -LiteralPath $vSheetPath -ErrorAction SilentlyContinue)) { return }
+                    $origCursor = [System.Windows.Input.Mouse]::OverrideCursor
+                    try {
+                        [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
+                        $sessionVal = if ($script:activeCourse.Session) { [string]$script:activeCourse.Session } else { "Jan-June 2026" }
+                        $res = Export-CourseCollegeResultSheets -Course $script:activeCourse -TargetSheet 'EndSem' -SessionName $sessionVal
+                        if ($res.Success) {
+                            Update-Stage2View -Course $script:activeCourse
+                            [System.Windows.MessageBox]::Show(
+                                "End Sem Theory Sheet synchronized successfully!`n`nVerified Students Included: $($res.VerifiedCount)",
+                                "Sheet Synchronized",
+                                [System.Windows.MessageBoxButton]::OK,
+                                [System.Windows.MessageBoxImage]::Information
+                            )
+                        } else {
+                            if ($res.Error -match "FILE_LOCKED:(.+)") {
+                                Show-SheetGenerationErrorDialog -LockedFileName $matches[1] -CustomTitle "End Sem Sheet Locked" -SheetTypeName "End Sem sheet"
+                            } else {
+                                [System.Windows.MessageBox]::Show("Sync failed: $($res.Error)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+                            }
+                        }
+                    } finally {
+                        [System.Windows.Input.Mouse]::OverrideCursor = $origCursor
+                    }
+                })
+            }
+
+            $btnSyncCumulative = $viewObj.FindName("BtnSyncCumulativeSheet")
+            if (-not $btnSyncCumulative) { $btnSyncCumulative = $viewObj.FindName("BtnSyncNptelSheet") }
+            if ($btnSyncCumulative) {
+                $btnSyncCumulative.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    $vSheetPath = if ($script:activeCourse.ExamVerificationSheet) { [string]$script:activeCourse.ExamVerificationSheet } else { "" }
+                    if (-not $vSheetPath -or -not (Test-Path -LiteralPath $vSheetPath -ErrorAction SilentlyContinue)) { return }
+                    $origCursor = [System.Windows.Input.Mouse]::OverrideCursor
+                    try {
+                        [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
+                        $sessionVal = if ($script:activeCourse.Session) { [string]$script:activeCourse.Session } else { "Jan-June 2026" }
+                        $res = Export-CourseCollegeResultSheets -Course $script:activeCourse -TargetSheet 'Cumulative' -SessionName $sessionVal
+                        if ($res.Success) {
+                            Update-Stage2View -Course $script:activeCourse
+                            [System.Windows.MessageBox]::Show(
+                                "Cumulative Sheet synchronized successfully!`n`nVerified Students Included: $($res.VerifiedCount)",
+                                "Sheet Synchronized",
+                                [System.Windows.MessageBoxButton]::OK,
+                                [System.Windows.MessageBoxImage]::Information
+                            )
+                        } else {
+                            if ($res.Error -match "FILE_LOCKED:(.+)") {
+                                Show-SheetGenerationErrorDialog -LockedFileName $matches[1] -CustomTitle "Cumulative Sheet Locked" -SheetTypeName "Cumulative sheet"
+                            } else {
+                                [System.Windows.MessageBox]::Show("Sync failed: $($res.Error)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+                            }
+                        }
+                    } finally {
+                        [System.Windows.Input.Mouse]::OverrideCursor = $origCursor
+                    }
+                })
+            }
+
+            # 6. Preview Modal Controls
+            $closeCollegeModalCb = {
+                $s2 = $script:views["Stage2View"]
+                $m = if ($s2) { $s2.FindName("CollegeSheetPreviewModal") } else { $null }
+                if ($m) { $m.Visibility = [System.Windows.Visibility]::Collapsed }
+            }
+
+            $btnCloseCollegePrev = $viewObj.FindName("BtnCloseCollegePreview")
+            if ($btnCloseCollegePrev) { $btnCloseCollegePrev.Add_Click($closeCollegeModalCb) }
+
+            $btnCloseCollegePrevBottom = $viewObj.FindName("BtnCloseCollegePreviewModalBottom")
+            if ($btnCloseCollegePrevBottom) { $btnCloseCollegePrevBottom.Add_Click($closeCollegeModalCb) }
+
+            $inpSearchCollege = $viewObj.FindName("InpSearchCollegePreview")
+            if ($inpSearchCollege) {
+                $inpSearchCollege.Add_TextChanged({
+                    Filter-CollegeSheetPreview -Query $this.Text
+                })
+            }
+
+            $btnOpenFromPreview = $viewObj.FindName("BtnOpenCollegeFromPreview")
+            if ($btnOpenFromPreview) {
+                $btnOpenFromPreview.Add_Click({
+                    $sType = if ($script:activeCollegePreviewSheetType) { $script:activeCollegePreviewSheetType } else { 'All' }
+                    Open-CourseCollegeSheetFile -SheetType $sType
+                })
+            }
         }
 
         "ReviewView" {
@@ -6707,6 +7543,11 @@ function Wire-ViewEvents {
                                 if ($match) {
                                     $s.ExamVerificationStatus = $entry.NewStatus
                                     $s.ExamVerificationRemarks = $entry.NewRemarks
+                                    if ($entry.ContainsKey('VerifiedAssignmentMarks')) {
+                                        $s.VerifiedAssignmentMarks = $entry.VerifiedAssignmentMarks
+                                        $s.VerifiedExamMarks       = $entry.VerifiedExamMarks
+                                        $s.VerifiedTotalMarks      = $entry.VerifiedTotalMarks
+                                    }
                                     break
                                 }
                             }
@@ -6903,6 +7744,123 @@ function Wire-ViewEvents {
                         $panelOverview = $erv.FindName("ExamReviewQueueOverviewPanel")
                         $panelDetail = $erv.FindName("ExamReviewStudentDetailPanel")
                         if ($panelDetail) { $panelDetail.Visibility = [System.Windows.Visibility]::Collapsed }
+                        if ($panelOverview) { $panelOverview.Visibility = [System.Windows.Visibility]::Visible }
+                        Update-ExamReviewView -Course $script:activeCourse
+                    } else {
+                        Show-ExamStudentReviewDetails -Student $st
+                    }
+                })
+            }
+
+            # Coordinator Action: Toggle Edit Certificate Marks Mode
+            $btnToggleEditR = $viewObj.FindName("BtnToggleEditCertMarksReview")
+            if ($btnToggleEditR) {
+                $btnToggleEditR.Add_Click({
+                    $erv = $script:views["ExamReviewView"]
+                    $ws  = if ($erv) { $erv.FindName("ExamReviewWorkspaceGrid") } else { $null }
+                    $st  = if ($ws) { $ws.Tag } else { $null }
+                    if (-not $erv -or -not $st) { return }
+
+                    $actsPanel = $erv.FindName("PanelEditCertActionsReview")
+                    $isCurrentlyEditing = ($actsPanel -and $actsPanel.Visibility -eq [System.Windows.Visibility]::Visible)
+                    Set-ExamCertMarksEditMode -View $erv -IsEditing (-not $isCurrentlyEditing) -ViewType "ExamReviewView" -Student $st
+                })
+            }
+
+            # Coordinator Action: Cancel Edit Certificate Marks
+            $btnCancelEditR = $viewObj.FindName("BtnCancelEditCertMarksReview")
+            if ($btnCancelEditR) {
+                $btnCancelEditR.Add_Click({
+                    $erv = $script:views["ExamReviewView"]
+                    $ws  = if ($erv) { $erv.FindName("ExamReviewWorkspaceGrid") } else { $null }
+                    $st  = if ($ws) { $ws.Tag } else { $null }
+                    if (-not $erv) { return }
+                    Set-ExamCertMarksEditMode -View $erv -IsEditing $false -ViewType "ExamReviewView" -Student $st
+                })
+            }
+
+            # Coordinator Action: Save Manual Marks & Approve Student
+            $btnSaveEditR = $viewObj.FindName("BtnSaveEditCertMarksReview")
+            if ($btnSaveEditR) {
+                $btnSaveEditR.Add_Click({
+                    $erv = $script:views["ExamReviewView"]
+                    $ws  = if ($erv) { $erv.FindName("ExamReviewWorkspaceGrid") } else { $null }
+                    $st  = if ($ws) { $ws.Tag } else { $null }
+                    if (-not $st -or -not $script:activeCourse) { return }
+
+                    $inpAssign = $erv.FindName("InpEditCertAssignReview")
+                    $inpExam   = $erv.FindName("InpEditCertExamReview")
+                    $inpTotal  = $erv.FindName("InpEditCertTotalReview")
+                    $inpReason = $erv.FindName("InpEditCertReasonReview")
+
+                    $rawAssign = if ($inpAssign) { $inpAssign.Text } else { "" }
+                    $rawExam   = if ($inpExam)   { $inpExam.Text }   else { "" }
+                    $rawTotal  = if ($inpTotal)  { $inpTotal.Text }  else { "" }
+                    $note      = if ($inpReason) { $inpReason.Text.Trim() } else { "" }
+
+                    $valRes = Test-ExamCertMarksInputs -RawAssign $rawAssign -RawExam $rawExam -RawTotal $rawTotal
+                    if (-not $valRes.IsValid) {
+                        [System.Windows.MessageBox]::Show($valRes.Error, "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                        return
+                    }
+
+                    $stName = if ($st.Name) { [string]$st.Name } else { "this student" }
+                    $stRoll = if ($st.RollNo) { [string]$st.RollNo } else { "No Roll No" }
+
+                    $assignVal = $valRes.Assign
+                    $examVal   = $valRes.Exam
+                    $totalVal  = $valRes.Total
+
+                    $confirm = [System.Windows.MessageBox]::Show(
+                        "Save manual certificate marks and approve verification for:`n`nName: $stName`nRoll No: $stRoll`n`nAssignment Marks: $assignVal / 25`nExam Marks: $examVal / 75`nTotal Consolidated: $totalVal / 100`n`nStatus will be updated to 'Verified' and staged to push to the Result Sheet.",
+                        "Save & Approve Student",
+                        [System.Windows.MessageBoxButton]::YesNo,
+                        [System.Windows.MessageBoxImage]::Question
+                    )
+                    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+                    $targetKey   = if ($st.RollNo) { [string]$st.RollNo } else { [string]$st.Email }
+                    $origStatus  = if ($st.ExamVerificationStatus -and $st.ExamVerificationStatus -ne "Verified") { [string]$st.ExamVerificationStatus } else { "Under Review" }
+                    $origRemarks = if ($st.ExamVerificationRemarks) { [string]$st.ExamVerificationRemarks } else { "" }
+
+                    $nowStr = (Get-Date).ToString("dd/MM/yyyy HH:mm")
+                    $emDash = [string][char]0x2014
+                    $newRem = "Verified (Manual Marks Entry by Coordinator on ${nowStr} - Assign $assignVal, Exam $examVal, Total $totalVal)"
+                    if ($note) { $newRem += " $emDash Note: $note" }
+
+                    $st.VerifiedAssignmentMarks = $assignVal
+                    $st.VerifiedExamMarks       = $examVal
+                    $st.VerifiedTotalMarks      = $totalVal
+                    $st.ExamVerificationStatus  = "Verified"
+                    $st.ExamVerificationRemarks = $newRem
+
+                    $null = $script:examReviewSessionSolvedRolls.Add($targetKey)
+                    $script:examReviewStagedSolved[$targetKey] = @{
+                        Student                  = $st
+                        RollNo                   = $st.RollNo
+                        Email                    = $st.Email
+                        NewStatus                = "Verified"
+                        NewRemarks               = $newRem
+                        OriginalStatus           = $origStatus
+                        OriginalRemarks          = $origRemarks
+                        VerifiedAssignmentMarks  = $assignVal
+                        VerifiedExamMarks        = $examVal
+                        VerifiedTotalMarks       = $totalVal
+                    }
+
+                    # Exit edit mode and refresh Mode B display
+                    Set-ExamCertMarksEditMode -View $erv -IsEditing $false -ViewType "ExamReviewView" -Student $st
+
+                    $askReturn = [System.Windows.MessageBox]::Show(
+                        "Student '$stName' ($stRoll) marks saved and approved!`n`nWould you like to return to the Review Queue now to push changes to the result sheet?",
+                        "Marks Saved & Approved",
+                        [System.Windows.MessageBoxButton]::YesNo,
+                        [System.Windows.MessageBoxImage]::Information
+                    )
+                    if ($askReturn -eq [System.Windows.MessageBoxResult]::Yes) {
+                        $panelOverview = $erv.FindName("ExamReviewQueueOverviewPanel")
+                        $panelDetail   = $erv.FindName("ExamReviewStudentDetailPanel")
+                        if ($panelDetail)   { $panelDetail.Visibility   = [System.Windows.Visibility]::Collapsed }
                         if ($panelOverview) { $panelOverview.Visibility = [System.Windows.Visibility]::Visible }
                         Update-ExamReviewView -Course $script:activeCourse
                     } else {
@@ -7344,6 +8302,111 @@ function Wire-ViewEvents {
                 })
             }
 
+            # Coordinator Action: Toggle Edit Certificate Marks Mode (from Mode B detail panel)
+            $btnToggleEditV = $viewObj.FindName("BtnToggleEditCertMarksVerified")
+            if ($btnToggleEditV) {
+                $btnToggleEditV.Add_Click({
+                    $evv = $script:views["ExamVerifiedView"]
+                    $ws  = if ($evv) { $evv.FindName("ExamVerifiedWorkspaceGrid") } else { $null }
+                    $st  = if ($ws) { $ws.Tag } else { $null }
+                    if (-not $evv -or -not $st) { return }
+
+                    $actsPanel = $evv.FindName("PanelEditCertActionsVerified")
+                    $isCurrentlyEditing = ($actsPanel -and $actsPanel.Visibility -eq [System.Windows.Visibility]::Visible)
+                    Set-ExamCertMarksEditMode -View $evv -IsEditing (-not $isCurrentlyEditing) -ViewType "ExamVerifiedView" -Student $st
+                })
+            }
+
+            # Coordinator Action: Cancel Edit Certificate Marks
+            $btnCancelEditV = $viewObj.FindName("BtnCancelEditCertMarksVerified")
+            if ($btnCancelEditV) {
+                $btnCancelEditV.Add_Click({
+                    $evv = $script:views["ExamVerifiedView"]
+                    $ws  = if ($evv) { $evv.FindName("ExamVerifiedWorkspaceGrid") } else { $null }
+                    $st  = if ($ws) { $ws.Tag } else { $null }
+                    if (-not $evv) { return }
+                    Set-ExamCertMarksEditMode -View $evv -IsEditing $false -ViewType "ExamVerifiedView" -Student $st
+                })
+            }
+
+            # Coordinator Action: Save Manual Marks in Verified View
+            $btnSaveEditV = $viewObj.FindName("BtnSaveEditCertMarksVerified")
+            if ($btnSaveEditV) {
+                $btnSaveEditV.Add_Click({
+                    $evv = $script:views["ExamVerifiedView"]
+                    $ws  = if ($evv) { $evv.FindName("ExamVerifiedWorkspaceGrid") } else { $null }
+                    $st  = if ($ws) { $ws.Tag } else { $null }
+                    if (-not $st -or -not $script:activeCourse) { return }
+
+                    $inpAssign = $evv.FindName("InpEditCertAssignVerified")
+                    $inpExam   = $evv.FindName("InpEditCertExamVerified")
+                    $inpTotal  = $evv.FindName("InpEditCertTotalVerified")
+                    $inpReason = $evv.FindName("InpEditCertReasonVerified")
+
+                    $rawAssign = if ($inpAssign) { $inpAssign.Text } else { "" }
+                    $rawExam   = if ($inpExam)   { $inpExam.Text }   else { "" }
+                    $rawTotal  = if ($inpTotal)  { $inpTotal.Text }  else { "" }
+                    $note      = if ($inpReason) { $inpReason.Text.Trim() } else { "" }
+
+                    $valRes = Test-ExamCertMarksInputs -RawAssign $rawAssign -RawExam $rawExam -RawTotal $rawTotal
+                    if (-not $valRes.IsValid) {
+                        [System.Windows.MessageBox]::Show($valRes.Error, "Validation Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                        return
+                    }
+
+                    $stName = if ($st.Name) { [string]$st.Name } else { "this student" }
+                    $stRoll = if ($st.RollNo) { [string]$st.RollNo } else { "No Roll No" }
+
+                    $assignVal = $valRes.Assign
+                    $examVal   = $valRes.Exam
+                    $totalVal  = $valRes.Total
+
+                    $confirm = [System.Windows.MessageBox]::Show(
+                        "Save updated certificate marks for:`n`nName: $stName`nRoll No: $stRoll`n`nAssignment Marks: $assignVal / 25`nExam Marks: $examVal / 75`nTotal Consolidated: $totalVal / 100`n`nThis change will be staged in NEW CHANGES until pushed to the Result Sheet.",
+                        "Save Certificate Marks",
+                        [System.Windows.MessageBoxButton]::YesNo,
+                        [System.Windows.MessageBoxImage]::Question
+                    )
+                    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+                    $targetKey   = if ($st.RollNo) { [string]$st.RollNo } else { [string]$st.Email }
+                    $nowStr      = (Get-Date).ToString("dd/MM/yyyy HH:mm")
+                    $emDash      = [string][char]0x2014
+                    $newRem      = "Verified (Manual Marks Correction on ${nowStr} - Assign $assignVal, Exam $examVal, Total $totalVal)"
+                    if ($note) { $newRem += " $emDash Note: $note" }
+
+                    $st.VerifiedAssignmentMarks = $assignVal
+                    $st.VerifiedExamMarks       = $examVal
+                    $st.VerifiedTotalMarks      = $totalVal
+                    $st.ExamVerificationRemarks = $newRem
+
+                    $script:examVerifiedStagedUnapproved[$targetKey] = @{
+                        Student                  = $st
+                        RollNo                   = $st.RollNo
+                        Email                    = $st.Email
+                        NewStatus                = "Verified"
+                        NewRemarks               = $newRem
+                        OriginalStatus           = "Verified"
+                        OriginalRemarks          = $st.ExamVerificationRemarks
+                        VerifiedAssignmentMarks  = $assignVal
+                        VerifiedExamMarks        = $examVal
+                        VerifiedTotalMarks       = $totalVal
+                    }
+
+                    # Exit edit mode and refresh Mode B display
+                    Set-ExamCertMarksEditMode -View $evv -IsEditing $false -ViewType "ExamVerifiedView" -Student $st
+                    Show-ExamVerifiedStudentDetails -Student $st
+                    Update-ExamVerifiedView -Course $script:activeCourse
+
+                    [System.Windows.MessageBox]::Show(
+                        "Student '$stName' ($stRoll) marks updated and staged in NEW CHANGES.`nClick [Push Changes to Result Sheet] when ready.",
+                        "Marks Updated",
+                        [System.Windows.MessageBoxButton]::OK,
+                        [System.Windows.MessageBoxImage]::Information
+                    )
+                })
+            }
+
             # Push Unapproved Changes to Result Sheet
             $btnPushV = $viewObj.FindName("BtnPushExamVerifiedChanges")
             if ($btnPushV) {
@@ -7388,6 +8451,11 @@ function Wire-ViewEvents {
                                 if ($match) {
                                     $s.ExamVerificationStatus  = $entry.NewStatus
                                     $s.ExamVerificationRemarks = $entry.NewRemarks
+                                    if ($entry.ContainsKey('VerifiedAssignmentMarks')) {
+                                        $s.VerifiedAssignmentMarks = $entry.VerifiedAssignmentMarks
+                                        $s.VerifiedExamMarks       = $entry.VerifiedExamMarks
+                                        $s.VerifiedTotalMarks      = $entry.VerifiedTotalMarks
+                                    }
                                     break
                                 }
                             }

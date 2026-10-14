@@ -475,9 +475,9 @@ function Import-ReceiptsFromLocalSource {
             if ($_.PSObject.Properties['IsRegistered']) { $_.IsRegistered -ne $false } else { $true }
         })
 
-        # Scan candidate receipt files recursively
+        # Scan candidate receipt files recursively (ignoring empty/corrupted 0-byte files)
         $candidateFiles = @(Get-ChildItem -LiteralPath $scanFolder -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
-            $_.Extension.ToLower() -in @('.png', '.jpg', '.jpeg', '.pdf', '.webp')
+            $_.Length -gt 0 -and $_.Extension.ToLower() -in @('.png', '.jpg', '.jpeg', '.pdf', '.webp')
         })
 
         # Precompute first name occurrences among registered students (for Tier 4 unique matching)
@@ -865,9 +865,9 @@ function Import-CertificatesFromLocalSource {
         # Students from exam responses
         $examStudents = @($Students)
 
-        # Scan candidate certificate files recursively
+        # Scan candidate certificate files recursively (ignoring empty/corrupted 0-byte files)
         $candidateFiles = @(Get-ChildItem -LiteralPath $scanFolder -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
-            $_.Extension.ToLower() -in @('.png', '.jpg', '.jpeg', '.pdf', '.webp')
+            $_.Length -gt 0 -and $_.Extension.ToLower() -in @('.png', '.jpg', '.jpeg', '.pdf', '.webp')
         })
 
         # Precompute first name occurrences among students (for Tier 4 unique matching)

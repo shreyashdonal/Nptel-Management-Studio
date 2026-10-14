@@ -645,29 +645,45 @@
                                             Padding="14"
                                             Margin="0,0,0,12">
                                         <StackPanel>
-                                            <TextBlock Text="ACADEMIC MARKS COMPARISON"
-                                                       FontFamily="IBM Plex Mono, Consolas"
-                                                       FontSize="10"
-                                                       FontWeight="Bold"
-                                                       Foreground="{DynamicResource MutedBrush}"
-                                                       Margin="0,0,0,10"/>
+                                            <!-- Card Header with Edit Toggle -->
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0"
+                                                           Text="ACADEMIC MARKS COMPARISON"
+                                                           FontFamily="IBM Plex Mono, Consolas"
+                                                           FontSize="10"
+                                                           FontWeight="Bold"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           VerticalAlignment="Center"/>
+                                                <Button x:Name="BtnToggleEditCertMarksVerified"
+                                                        Grid.Column="1"
+                                                        Content="&#x270E; Edit Certificate Marks"
+                                                        Style="{DynamicResource BtnSecondary}"
+                                                        FontSize="10"
+                                                        FontWeight="SemiBold"
+                                                        Padding="8,3"
+                                                        Cursor="Hand"/>
+                                            </Grid>
 
                                             <!-- Comparison Table Header -->
                                             <Grid Margin="0,0,0,6">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="100"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="CRITERIA" FontSize="9" FontWeight="Bold" FontFamily="IBM Plex Mono" Foreground="{DynamicResource MutedBrush}"/>
                                                 <TextBlock Grid.Column="1" Text="DECLARED" FontSize="9" FontWeight="Bold" FontFamily="IBM Plex Mono" Foreground="{DynamicResource MutedBrush}"/>
-                                                <TextBlock Grid.Column="2" Text="CERTIFICATE" FontSize="9" FontWeight="Bold" FontFamily="IBM Plex Mono" Foreground="{DynamicResource SageBrush}"/>
+                                                <TextBlock x:Name="TxtHeaderCertVerified" Grid.Column="2" Text="CERTIFICATE" FontSize="9" FontWeight="Bold" FontFamily="IBM Plex Mono" Foreground="{DynamicResource SageBrush}"/>
                                             </Grid>
 
                                             <!-- Row: Course -->
                                             <Grid Margin="0,0,0,6">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="100"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
@@ -679,7 +695,7 @@
                                             <!-- Row: Candidate Name -->
                                             <Grid Margin="0,0,0,6">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="100"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
@@ -693,25 +709,32 @@
                                             <!-- Row: Assignment /25 -->
                                             <Grid Margin="0,0,0,6">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="100"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="Assign (/25)" FontSize="11" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
-                                                <TextBlock x:Name="TxtExamVerifiedDeclAssign" Grid.Column="1" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
-                                                <TextBlock x:Name="TxtExamVerifiedCertAssign" Grid.Column="2" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SageBrush}"/>
+                                                <TextBlock x:Name="TxtExamVerifiedDeclAssign" Grid.Column="1" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                                <!-- View Mode -->
+                                                <TextBlock x:Name="TxtExamVerifiedCertAssign" Grid.Column="2" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SageBrush}" VerticalAlignment="Center"/>
+                                                <!-- Edit Mode -->
+                                                <StackPanel x:Name="PanelEditCertAssignVerified" Grid.Column="2" Orientation="Horizontal" Visibility="Collapsed" VerticalAlignment="Center">
+                                                    <TextBox x:Name="InpEditCertAssignVerified" Style="{DynamicResource InputDark}" Width="52" Height="24" FontSize="11" FontFamily="IBM Plex Mono" Padding="4,1" VerticalContentAlignment="Center"/>
+                                                    <TextBlock Text="/ 25" FontSize="10" Foreground="{DynamicResource MutedBrush}" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                                </StackPanel>
                                             </Grid>
 
                                             <!-- Row: Exam /75 -->
                                             <Grid Margin="0,0,0,6">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="100"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="Exam (/75)" FontSize="11" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
-                                                <TextBlock x:Name="TxtExamVerifiedDeclExam" Grid.Column="1" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
-                                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock x:Name="TxtExamVerifiedDeclExam" Grid.Column="1" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                                <!-- View Mode -->
+                                                <StackPanel x:Name="PanelExamVerifiedCertExamView" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                                     <TextBlock x:Name="TxtExamVerifiedCertExam" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SageBrush}" Margin="0,0,6,0"/>
                                                     <Border x:Name="BadgeExamVerifiedPassFail"
                                                             Background="{DynamicResource SageTintBrush}"
@@ -728,19 +751,80 @@
                                                                    Foreground="{DynamicResource SageBrush}"/>
                                                     </Border>
                                                 </StackPanel>
+                                                <!-- Edit Mode -->
+                                                <StackPanel x:Name="PanelEditCertExamVerified" Grid.Column="2" Orientation="Horizontal" Visibility="Collapsed" VerticalAlignment="Center">
+                                                    <TextBox x:Name="InpEditCertExamVerified" Style="{DynamicResource InputDark}" Width="52" Height="24" FontSize="11" FontFamily="IBM Plex Mono" Padding="4,1" VerticalContentAlignment="Center"/>
+                                                    <TextBlock Text="/ 75" FontSize="10" Foreground="{DynamicResource MutedBrush}" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                                </StackPanel>
                                             </Grid>
 
                                             <!-- Row: Total /100 -->
                                             <Grid Margin="0,0,0,8">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="100"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="Total (/100)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
-                                                <TextBlock x:Name="TxtExamVerifiedDeclTotal" Grid.Column="1" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource TextBrush}"/>
-                                                <TextBlock x:Name="TxtExamVerifiedCertTotal" Grid.Column="2" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource SageBrush}"/>
+                                                <TextBlock x:Name="TxtExamVerifiedDeclTotal" Grid.Column="1" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                                <!-- View Mode -->
+                                                <TextBlock x:Name="TxtExamVerifiedCertTotal" Grid.Column="2" Text="&#x2014;" FontFamily="IBM Plex Mono" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource SageBrush}" VerticalAlignment="Center"/>
+                                                <!-- Edit Mode -->
+                                                <StackPanel x:Name="PanelEditCertTotalVerified" Grid.Column="2" Orientation="Horizontal" Visibility="Collapsed" VerticalAlignment="Center">
+                                                    <TextBox x:Name="InpEditCertTotalVerified" Style="{DynamicResource InputDark}" Width="52" Height="24" FontSize="11" FontFamily="IBM Plex Mono" FontWeight="Bold" Padding="4,1" VerticalContentAlignment="Center"/>
+                                                    <TextBlock Text="/ 100" FontSize="10" Foreground="{DynamicResource MutedBrush}" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                                </StackPanel>
                                             </Grid>
+
+                                            <!-- Edit Mode Action & Remarks Box -->
+                                            <Border x:Name="PanelEditCertActionsVerified"
+                                                    Visibility="Collapsed"
+                                                    Background="{DynamicResource PanelBrush}"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="10"
+                                                    Margin="0,4,0,8">
+                                                <StackPanel>
+                                                    <TextBlock Text="REMARKS / REASON (OPTIONAL)"
+                                                               FontFamily="IBM Plex Mono"
+                                                               FontSize="9"
+                                                               FontWeight="Bold"
+                                                               Foreground="{DynamicResource MutedBrush}"
+                                                               Margin="0,0,0,4"/>
+                                                    <TextBox x:Name="InpEditCertReasonVerified"
+                                                             Style="{DynamicResource InputDark}"
+                                                             Height="26"
+                                                             FontSize="11"
+                                                             Padding="6,3"
+                                                             VerticalContentAlignment="Center"
+                                                             Margin="0,0,0,8"/>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Button x:Name="BtnCancelEditCertMarksVerified"
+                                                                Grid.Column="1"
+                                                                Content="Cancel &#x2715;"
+                                                                Style="{DynamicResource BtnSecondary}"
+                                                                FontSize="11"
+                                                                Padding="10,5"
+                                                                Margin="0,0,6,0"
+                                                                Cursor="Hand"/>
+                                                        <Button x:Name="BtnSaveEditCertMarksVerified"
+                                                                Grid.Column="2"
+                                                                Content="&#x2713; Save Changes"
+                                                                Style="{DynamicResource BtnPrimary}"
+                                                                Background="{DynamicResource SageBrush}"
+                                                                FontSize="11"
+                                                                FontWeight="SemiBold"
+                                                                Padding="12,5"
+                                                                Cursor="Hand"/>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
 
                                             <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,0,0,8"/>
 
