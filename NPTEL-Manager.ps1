@@ -10,9 +10,13 @@ Set-StrictMode -Off
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction SilentlyContinue
 
 if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
-    $scriptFile = if ($PSScriptRoot) { Join-Path $PSScriptRoot "NPTEL-Manager.ps1" } elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { ".\NPTEL-Manager.ps1" }
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "$scriptFile"
-    exit
+    $procName = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $isCompiledExe = ($procName -match '\.exe$') -and ($procName -notmatch 'powershell|pwsh')
+    if (-not $isCompiledExe) {
+        $scriptFile = if ($PSScriptRoot) { Join-Path $PSScriptRoot "NPTEL-Manager.ps1" } elseif ($MyInvocation -and $MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { ".\NPTEL-Manager.ps1" }
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "$scriptFile"
+        exit
+    }
 }
 
 Add-Type -AssemblyName PresentationFramework
@@ -21,8 +25,12 @@ Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Xaml
 Add-Type -AssemblyName System.Windows.Forms
 
-# 1. Resolve Application Root Directory (Safe null checks)
+# 1. Resolve Application Root Directory (Safe null checks, supports compiled EXE)
 function Resolve-AppRoot {
+    $baseDir = [System.AppDomain]::CurrentDomain.BaseDirectory
+    if ($baseDir -and (Test-Path (Join-Path $baseDir "UI\MainWindow.xaml"))) {
+        return $baseDir.TrimEnd('\')
+    }
     if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "UI\MainWindow.xaml"))) {
         return $PSScriptRoot
     }
@@ -41,6 +49,15 @@ function Resolve-AppRoot {
 
 $appRoot = Resolve-AppRoot
 $script:appRoot = $appRoot
+
+# 1.05 Auto-register local bundled modules (e.g. ImportExcel) so the app runs 100% offline without installation
+$localModulesDir = Join-Path $appRoot "modules"
+$bundledImportExcel = Join-Path $appRoot "modules\ImportExcel"
+if (Test-Path -LiteralPath $bundledImportExcel) {
+    if (-not ($env:PSModulePath -split ';' -contains $localModulesDir)) {
+        $env:PSModulePath = "$localModulesDir;" + $env:PSModulePath
+    }
+}
 
 # 1.1 Load Helper Modules
 $importModule = Join-Path $appRoot "modules\Import-StudentSheet.ps1"
@@ -121,6 +138,10 @@ $script:examVerifiedCurrentPage      = 1
 $script:examVerifiedPageSize         = 25
 $script:examVerifiedSearchQuery      = ""
 $script:examVerifiedStagedUnapproved = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$script:stage1VerifiedCurrentPage      = 1
+$script:stage1VerifiedPageSize         = 25
+$script:stage1VerifiedSearchQuery      = ""
+$script:stage1VerifiedStagedUnapproved = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
 $script:emailReturnView = "ReviewView"
 
 function Save-Courses {
@@ -630,8 +651,6 @@ if (-not $window) {
 $ViewContainer = $window.FindName("ViewContainer")
 $NavBtnHome = $window.FindName("NavBtnHome")
 $NavBtnCourses = $window.FindName("NavBtnCourses")
-$NavBtnSettings = $window.FindName("NavBtnSettings")
-$BtnHeaderSync = $window.FindName("BtnHeaderSync")
 $TxtStatusBadge = $window.FindName("TxtStatusBadge")
 $StatusDot = $window.FindName("StatusDot")
 
@@ -649,6 +668,38 @@ function Get-OrCreateView {
     $script:views[$ViewName] = $view
     Wire-ViewEvents $ViewName $view
     return $view
+}
+
+# 8.1 Google Form Links Configuration & Browser Launcher
+function Get-FormLinks {
+    $linksFile = Join-Path $appRoot "data\form_links.json"
+    if (Test-Path -LiteralPath $linksFile) {
+        try {
+            $raw = Get-Content -LiteralPath $linksFile -Raw -Encoding UTF8
+            return ($raw | ConvertFrom-Json)
+        } catch { }
+    }
+    return [PSCustomObject]@{
+        Stage1FormUrl = "https://docs.google.com/forms/d/e/1FAIpQLScf2HD7Kx7bI8VsHZNibyrCCaVUMoST7QKimyarUxw0BD3v4Q/viewform?usp=header"
+        Stage2FormUrl = "https://docs.google.com/forms/d/e/1FAIpQLSciDWGLChrbIXr6RJ9WUO_bfTAhVkaGUG3bsuozgoP5FNPspA/viewform?usp=header"
+    }
+}
+
+function Start-UrlInBrowser {
+    param([Parameter(Mandatory = $true)][string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return }
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Url
+        $psi.UseShellExecute = $true
+        [System.Diagnostics.Process]::Start($psi) | Out-Null
+    } catch {
+        try {
+            Start-Process $Url
+        } catch {
+            [System.Windows.MessageBox]::Show("Could not launch web browser for:`n$Url`n`nError: $($_.Exception.Message)", "Browser Launcher Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        }
+    }
 }
 
 function Remove-Course {
@@ -719,7 +770,7 @@ function Remove-Course {
     Refresh-CourseLists
 
     # 5. If currently viewing workspace or child view of deleted course, navigate to CoursesView
-    if ($script:currentView -in @("WorkspaceView", "Stage1View", "Stage2View", "ReviewView", "ExamReviewView", "ExamVerifiedView")) {
+    if ($script:currentView -in @("WorkspaceView", "Stage1View", "Stage2View", "ReviewView", "ExamReviewView", "ExamVerifiedView", "StudentListView")) {
         Navigate-To "CoursesView"
     }
 
@@ -871,6 +922,9 @@ function Select-Course {
         $script:examReviewCurrentPage = 1
         $script:examReviewSearchQuery = ""
     }
+    $script:stage1VerifiedStagedUnapproved.Clear()
+    $script:stage1VerifiedCurrentPage = 1
+    $script:stage1VerifiedSearchQuery = ""
     $script:activeCourse = $Course
 
     $cName = if ($Course.Name) { [string]$Course.Name } else { "Untitled Course" }
@@ -945,25 +999,6 @@ function Select-Course {
             $semStr = if ($cSem) { "$cSem" } else { "" }
             $subtitle.Text = "$deptStr$semStr"
         }
-        if ($statResults) {
-            if ($Course.ExamResultsSheet) {
-                $statResults.Text = "Uploaded"
-                $statResults.Foreground = $sageBrush
-            } else {
-                $statResults.Text = "Pending"
-                $statResults.Foreground = $mutedBrush
-            }
-        }
-
-        # Bind Top Metric Cards
-        $statEnrolled = $wsView.FindName("TxtStatEnrolled")
-        if ($statEnrolled) { $statEnrolled.Text = [string]$totalCount }
-
-        $statExamReg = $wsView.FindName("TxtStatExamRegistered")
-        if ($statExamReg) { $statExamReg.Text = [string]$regCount }
-
-        $statAction = $wsView.FindName("TxtStatActionNeeded")
-        if ($statAction) { $statAction.Text = [string]$actionCount }
 
         # Stage 1 Status Badge
         $txtStage1Status = $wsView.FindName("TxtStage1Status")
@@ -1239,9 +1274,14 @@ function Select-Course {
         Update-ExamVerifiedView -Course $Course
     }
 
+    # -- Update Stage 1 Verified Students View (if initialized) --
+    if ($script:views.ContainsKey("StudentListView")) {
+        Update-StudentListView -Course $Course
+    }
+
     if ($TargetView) {
         Navigate-To $TargetView
-    } elseif ($script:currentView -eq "Stage1View" -or $script:currentView -eq "Stage2View" -or $script:currentView -eq "ReviewView" -or $script:currentView -eq "ExamReviewView" -or $script:currentView -eq "ExamVerifiedView") {
+    } elseif ($script:currentView -eq "Stage1View" -or $script:currentView -eq "Stage2View" -or $script:currentView -eq "ReviewView" -or $script:currentView -eq "ExamReviewView" -or $script:currentView -eq "ExamVerifiedView" -or $script:currentView -eq "StudentListView") {
         # Already inside the Stage detail view or Review queue / Verified roster; keep user on the active view
     } else {
         Navigate-To "WorkspaceView"
@@ -2272,6 +2312,512 @@ function Open-ReviewView {
     }
     Update-ReviewView -Course $script:activeCourse
     Navigate-To "ReviewView"
+}
+
+# =====================================================================
+# Stage 1 Verified Students Workspace Controller (StudentListView)
+# =====================================================================
+
+function Find-LocalReceiptFile {
+    param(
+        $Course,
+        $Student
+    )
+    if (-not $Course -or -not $Student) { return $null }
+
+    if ($Student.LocalReceiptPath -and (Test-Path -LiteralPath $Student.LocalReceiptPath)) {
+        return $Student.LocalReceiptPath
+    }
+
+    $cName = if ($Course.Name) { [string]$Course.Name } else { "Default" }
+    $cleanCName = ($cName -replace '[\\/:*?"<>|]', '_').Trim()
+    $receiptsDir = Join-Path $script:appRoot "data\Courses\$cleanCName\receipts"
+    if (-not (Test-Path -LiteralPath $receiptsDir)) { return $null }
+
+    # 1. Use high-accuracy Find-LocalReceiptMatch if available
+    if (Get-Command Find-LocalReceiptMatch -ErrorAction SilentlyContinue) {
+        $match = Find-LocalReceiptMatch -SearchFolder $receiptsDir -RollNo $Student.RollNo -Name $Student.Name
+        if ($match) { return $match }
+    }
+
+    # 2. File patterns fallback
+    $cleanRoll = if ($Student.RollNo) { ($Student.RollNo -replace '[\\/:*?"<>|]', '_').Trim() } else { "" }
+    if ($cleanRoll) {
+        $patterns = @("${cleanRoll}_receipt.*", "${cleanRoll}.*", "*${cleanRoll}*.*")
+        foreach ($pat in $patterns) {
+            $found = @(Get-ChildItem -LiteralPath $receiptsDir -Filter $pat -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 })
+            if ($found.Count -gt 0) {
+                return ($found | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+            }
+        }
+    }
+    return $null
+}
+
+function Export-Stage1VerifiedStudentsCsv {
+    param(
+        $Course = $script:activeCourse
+    )
+    if (-not $Course) { return }
+
+    $cName = if ($Course.Name) { [string]$Course.Name } else { "Course" }
+    $cleanCName = ($cName -replace '[\\/:*?"<>|]', '_').Trim()
+
+    $store = Get-CourseStudentStore -CourseId $Course.Id -RegistrationSheet $Course.RegistrationSheet -CourseName $Course.Name
+    $students = if ($store -and $store.Students) { @($store.Students) } else { @() }
+    $verified = @($students | Where-Object { $_.VerificationStatus -eq "Verified" })
+
+    if ($verified.Count -eq 0) {
+        [System.Windows.MessageBox]::Show(
+            "There are no verified students to export for this course.",
+            "Export CSV",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information
+        )
+        return
+    }
+
+    $exportDir = Join-Path $script:appRoot "data\Courses\$cleanCName"
+    if (-not (Test-Path -LiteralPath $exportDir)) {
+        New-Item -ItemType Directory -Path $exportDir -Force | Out-Null
+    }
+    $timestamp = (Get-Date).ToString("yyyyMMdd_HHmmss")
+    $defaultFilename = "${cleanCName}_Verified_Students_${timestamp}.csv"
+    $exportPath = Join-Path $exportDir $defaultFilename
+
+    try {
+        $csvRows = foreach ($st in $verified) {
+            [PSCustomObject]@{
+                "Roll Number"          = if ($st.RollNo) { [string]$st.RollNo } else { "" }
+                "Student Name"         = if ($st.Name) { [string]$st.Name } else { "" }
+                "Email"                = if ($st.Email) { [string]$st.Email } else { "" }
+                "Subject / Course"     = if ($st.Subject) { [string]$st.Subject } else { $cName }
+                "Registration Status"  = if ($st.IsRegistered) { "Registered" } else { "No" }
+                "Verification Status"  = if ($st.VerificationStatus) { [string]$st.VerificationStatus } else { "Verified" }
+                "Verification Remarks" = if ($st.VerificationRemarks) { [string]$st.VerificationRemarks } else { "" }
+                "Receipt Proof URL"    = if ($st.ProofUrl) { [string]$st.ProofUrl } else { "" }
+                "Form Timestamp"       = if ($st.Timestamp) { [string]$st.Timestamp } else { "" }
+            }
+        }
+        $csvRows | Export-Csv -Path $exportPath -NoTypeInformation -Encoding UTF8
+
+        $openConfirm = [System.Windows.MessageBox]::Show(
+            "Verified students exported successfully!`n`nFile: $exportPath`n`nWould you like to open the CSV file now?",
+            "Export Successful",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Information
+        )
+        if ($openConfirm -eq [System.Windows.MessageBoxResult]::Yes) {
+            [System.Diagnostics.Process]::Start([System.Diagnostics.ProcessStartInfo]@{
+                FileName = $exportPath
+                UseShellExecute = $true
+            }) | Out-Null
+        }
+    } catch {
+        [System.Windows.MessageBox]::Show(
+            "Failed to export CSV:`n$($_.Exception.Message)",
+            "Export Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error
+        )
+    }
+}
+
+function Update-StudentListView {
+    param(
+        $Course = $script:activeCourse,
+        $Students = $null
+    )
+    if (-not $Course) { $Course = $script:activeCourse }
+    if (-not $Course) { return }
+
+    $slv = Get-OrCreateView "StudentListView"
+    if (-not $slv) { return }
+
+    $cName = if ($Course.Name) { [string]$Course.Name } else { "Course" }
+    $cCode = if ($Course.Code) { [string]$Course.Code } else { "" }
+
+    # Breadcrumb & Course Title
+    $dashToken = [string][char]0x2014
+    $txtBreadcrumb = $slv.FindName("TxtVerifiedBreadcrumb")
+    if ($txtBreadcrumb) {
+        $codeStr = if ($cCode) { " ($cCode)" } else { "" }
+        $cUpper = if ($cName) { $cName.ToUpper() } else { "COURSE" }
+        $txtBreadcrumb.Text = "COURSES $dashToken $cUpper$codeStr $dashToken STAGE 1 $dashToken VERIFIED STUDENTS"
+    }
+
+    $txtCourseTitle = $slv.FindName("TxtVerifiedCourseTitle")
+    if ($txtCourseTitle) {
+        $txtCourseTitle.Text = "$cName $dashToken Verified Students Roster"
+    }
+
+    if (-not $Students) {
+        $store = Get-CourseStudentStore -CourseId $Course.Id -RegistrationSheet $Course.RegistrationSheet -CourseName $Course.Name
+        $Students = if ($store -and $store.Students) { @($store.Students) } else { @() }
+    }
+
+    # 1. Filter: only Verified students
+    $verifiedStudents = [System.Collections.ArrayList]@()
+    foreach ($st in $Students) {
+        $stStatus = if ($st.VerificationStatus) { [string]$st.VerificationStatus } else { "Pending" }
+        if ($stStatus -eq "Verified") {
+            $null = $verifiedStudents.Add($st)
+        }
+    }
+
+    # 2. Header verified count
+    $txtHeader = $slv.FindName("TxtVerifiedHeaderCount")
+    if ($txtHeader) {
+        $total = $verifiedStudents.Count
+        $word = if ($total -eq 1) { "Student" } else { "Students" }
+        $txtHeader.Text = "$total Verified $word"
+    }
+
+    # 3. Staged Push Action Bar
+    $stagedCount = $script:stage1VerifiedStagedUnapproved.Count
+    $panelPush = $slv.FindName("PanelStagedUnapprovedPushBar")
+    $txtPushNotice = $slv.FindName("TxtStagedUnapprovedNotice")
+    $btnPush = $slv.FindName("BtnPushStage1VerifiedChanges")
+
+    if ($panelPush) {
+        $panelPush.Visibility = if ($stagedCount -gt 0) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+    }
+    if ($txtPushNotice) {
+        $plural = if ($stagedCount -eq 1) { "1 student marked for unapproval." } else { "$stagedCount students marked for unapproval." }
+        $txtPushNotice.Text = $plural
+    }
+    if ($btnPush) {
+        $btnPush.IsEnabled = ($stagedCount -gt 0)
+    }
+
+    # 4. Search Filter
+    $filterTrimmed = if ($script:stage1VerifiedSearchQuery) { $script:stage1VerifiedSearchQuery.Trim() } else { "" }
+    $filteredStudents = [System.Collections.ArrayList]@()
+    if ($filterTrimmed) {
+        foreach ($st in $verifiedStudents) {
+            $roll  = if ($st.RollNo) { [string]$st.RollNo } else { "" }
+            $name  = if ($st.Name) { [string]$st.Name } else { "" }
+            $email = if ($st.Email) { [string]$st.Email } else { "" }
+            $subj  = if ($st.Subject) { [string]$st.Subject } else { "" }
+            if ($roll.IndexOf($filterTrimmed, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $name.IndexOf($filterTrimmed, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $email.IndexOf($filterTrimmed, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $subj.IndexOf($filterTrimmed, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                $null = $filteredStudents.Add($st)
+            }
+        }
+    } else {
+        $filteredStudents = $verifiedStudents
+    }
+
+    # 5. Pagination
+    $totalFiltered = $filteredStudents.Count
+    $pageSize = if ($script:stage1VerifiedPageSize -gt 0) { $script:stage1VerifiedPageSize } else { 25 }
+    $totalPages = [Math]::Max(1, [int][Math]::Ceiling($totalFiltered / $pageSize))
+
+    if ($script:stage1VerifiedCurrentPage -lt 1) {
+        $script:stage1VerifiedCurrentPage = 1
+    } elseif ($script:stage1VerifiedCurrentPage -gt $totalPages) {
+        $script:stage1VerifiedCurrentPage = $totalPages
+    }
+
+    $startIndex  = ($script:stage1VerifiedCurrentPage - 1) * $pageSize
+    $countToTake = [Math]::Min($pageSize, [Math]::Max(0, $totalFiltered - $startIndex))
+
+    $pagedStudents = [System.Collections.ArrayList]@()
+    if ($totalFiltered -gt 0 -and $countToTake -gt 0) {
+        for ($i = 0; $i -lt $countToTake; $i++) {
+            $null = $pagedStudents.Add($filteredStudents[$startIndex + $i])
+        }
+    }
+
+    # 6. Pagination UI
+    $txtRange = $slv.FindName("TxtVerifiedPageRange")
+    $btnPrev = $slv.FindName("BtnVerifiedPrevPage")
+    $btnNext = $slv.FindName("BtnVerifiedNextPage")
+    $dash = [char]0x2013
+
+    if ($txtRange) {
+        if ($totalFiltered -eq 0) {
+            $txtRange.Text = if ($filterTrimmed) { "(No students match search filter)" } else { "Showing 0 of 0" }
+        } else {
+            $startNum = $startIndex + 1
+            $endNum   = $startIndex + $countToTake
+            if ($filterTrimmed) {
+                $txtRange.Text = "Showing $startNum$dash$endNum of $totalFiltered (filtered from $($verifiedStudents.Count))"
+            } else {
+                $txtRange.Text = "Showing $startNum$dash$endNum of $totalFiltered"
+            }
+        }
+    }
+    if ($btnPrev) { $btnPrev.IsEnabled = ($script:stage1VerifiedCurrentPage -gt 1) }
+    if ($btnNext) { $btnNext.IsEnabled = ($script:stage1VerifiedCurrentPage -lt $totalPages) }
+
+    # 7. Build Rows
+    $hostPanel = $slv.FindName("VerifiedStudentsTableHost")
+    $emptyNotice = $slv.FindName("VerifiedEmptyNotice")
+
+    if ($hostPanel) {
+        $hostPanel.Children.Clear()
+
+        if ($pagedStudents.Count -gt 0) {
+            if ($emptyNotice) { $emptyNotice.Visibility = [System.Windows.Visibility]::Collapsed }
+
+            foreach ($st in $pagedStudents) {
+                $stKey = if ($st.RollNo) { [string]$st.RollNo } else { [string]$st.Email }
+                $isStaged = $script:stage1VerifiedStagedUnapproved.ContainsKey($stKey)
+
+                $cardBorder = New-Object System.Windows.Controls.Border
+                $cardBorder.Background = if ($isStaged) {
+                    [System.Windows.Application]::Current.FindResource("PanelModBrush")
+                } else {
+                    [System.Windows.Application]::Current.FindResource("Panel2Brush")
+                }
+                $cardBorder.BorderBrush = if ($isStaged) {
+                    [System.Windows.Application]::Current.FindResource("DangerBrush")
+                } else {
+                    [System.Windows.Application]::Current.FindResource("SageBrush")
+                }
+                $cardBorder.BorderThickness = New-Object System.Windows.Thickness(1)
+                $cardBorder.CornerRadius    = New-Object System.Windows.CornerRadius(6)
+                $cardBorder.Padding         = New-Object System.Windows.Thickness(14, 10, 14, 10)
+                $cardBorder.Margin          = New-Object System.Windows.Thickness(0, 0, 0, 8)
+                $cardBorder.Tag             = $st
+
+                $rowGrid = New-Object System.Windows.Controls.Grid
+                $col0 = New-Object System.Windows.Controls.ColumnDefinition
+                $col0.Width = New-Object System.Windows.GridLength(150)
+                $col1 = New-Object System.Windows.Controls.ColumnDefinition
+                $col1.Width = New-Object System.Windows.GridLength(220)
+                $col2 = New-Object System.Windows.Controls.ColumnDefinition
+                $col2.Width = New-Object System.Windows.GridLength(190)
+                $col3 = New-Object System.Windows.Controls.ColumnDefinition
+                $col3.Width = New-Object System.Windows.GridLength(140)
+                $col4 = New-Object System.Windows.Controls.ColumnDefinition
+                $col4.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+                $null = $rowGrid.ColumnDefinitions.Add($col0)
+                $null = $rowGrid.ColumnDefinitions.Add($col1)
+                $null = $rowGrid.ColumnDefinitions.Add($col2)
+                $null = $rowGrid.ColumnDefinitions.Add($col3)
+                $null = $rowGrid.ColumnDefinitions.Add($col4)
+
+                # Column 0: Roll No
+                $txtRoll = New-Object System.Windows.Controls.TextBlock
+                $txtRoll.Text = if ($st.RollNo) { [string]$st.RollNo } else { "No Roll No" }
+                $txtRoll.FontFamily = New-Object System.Windows.Media.FontFamily("IBM Plex Mono, Consolas")
+                $txtRoll.FontSize   = 12
+                $txtRoll.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $txtRoll.Foreground = [System.Windows.Application]::Current.FindResource("TextBrush")
+                $txtRoll.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+                [System.Windows.Controls.Grid]::SetColumn($txtRoll, 0)
+                $null = $rowGrid.Children.Add($txtRoll)
+
+                # Column 1: Student Name + Subtitle (Email/Course)
+                $spName = New-Object System.Windows.Controls.StackPanel
+                $spName.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+                $spName.Margin = New-Object System.Windows.Thickness(0, 0, 10, 0)
+
+                $txtName = New-Object System.Windows.Controls.TextBlock
+                $txtName.Text = if ($st.Name) { [string]$st.Name } else { "Unnamed Student" }
+                $txtName.FontSize   = 12
+                $txtName.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $txtName.Foreground = [System.Windows.Application]::Current.FindResource("TextBrush")
+                $txtName.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+                $null = $spName.Children.Add($txtName)
+
+                $subTextStr = if ($st.Email) { [string]$st.Email } elseif ($st.Subject) { [string]$st.Subject } else { "" }
+                if ($subTextStr) {
+                    $txtSub = New-Object System.Windows.Controls.TextBlock
+                    $txtSub.Text = $subTextStr
+                    $txtSub.FontSize = 10
+                    $txtSub.Foreground = [System.Windows.Application]::Current.FindResource("MutedBrush")
+                    $txtSub.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+                    $txtSub.Margin = New-Object System.Windows.Thickness(0, 2, 0, 0)
+                    $null = $spName.Children.Add($txtSub)
+                }
+
+                [System.Windows.Controls.Grid]::SetColumn($spName, 1)
+                $null = $rowGrid.Children.Add($spName)
+
+                # Column 2: Payment Status & Fee Pill
+                $spPay = New-Object System.Windows.Controls.StackPanel
+                $spPay.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+                $spPay.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+
+                $pillBorder = New-Object System.Windows.Controls.Border
+                $pillBorder.Background  = if ($isStaged) { [System.Windows.Application]::Current.FindResource("DangerTintBrush") } else { [System.Windows.Application]::Current.FindResource("SageTintBrush") }
+                $pillBorder.BorderBrush = if ($isStaged) { [System.Windows.Application]::Current.FindResource("DangerBrush") } else { [System.Windows.Application]::Current.FindResource("SageBrush") }
+                $pillBorder.BorderThickness = New-Object System.Windows.Thickness(1)
+                $pillBorder.CornerRadius    = New-Object System.Windows.CornerRadius(4)
+                $pillBorder.Padding         = New-Object System.Windows.Thickness(8, 3, 8, 3)
+                $pillBorder.Margin          = New-Object System.Windows.Thickness(0, 0, 6, 0)
+
+                $pillTxt = New-Object System.Windows.Controls.TextBlock
+                $checkToken = [string][char]0x2713
+                $bulletToken = [string][char]0x2022
+                $rupeeToken = [string][char]0x20B9
+                $pillTxt.Text = if ($isStaged) { "UNAPPROVE STAGED" } else { "$checkToken VERIFIED $bulletToken $rupeeToken" + "1,000" }
+                $pillTxt.FontFamily = New-Object System.Windows.Media.FontFamily("IBM Plex Mono, Consolas")
+                $pillTxt.FontSize   = 10
+                $pillTxt.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $pillTxt.Foreground = if ($isStaged) { [System.Windows.Application]::Current.FindResource("DangerBrush") } else { [System.Windows.Application]::Current.FindResource("SageBrush") }
+                $pillBorder.Child   = $pillTxt
+                $null = $spPay.Children.Add($pillBorder)
+
+                [System.Windows.Controls.Grid]::SetColumn($spPay, 2)
+                $null = $rowGrid.Children.Add($spPay)
+
+                # Column 3: Receipt Proof Button
+                $spReceipt = New-Object System.Windows.Controls.StackPanel
+                $spReceipt.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+                $spReceipt.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+
+                $btnRec = New-Object System.Windows.Controls.Button
+                $btnRec.Content = "Receipt"
+                $btnRec.Style = [System.Windows.Application]::Current.FindResource("BtnSecondary")
+                $btnRec.Padding = New-Object System.Windows.Thickness(8, 4, 8, 4)
+                $btnRec.FontSize = 11
+                $btnRec.Cursor = [System.Windows.Input.Cursors]::Hand
+                $btnRec.Tag = $st
+                $btnRec.ToolTip = "Open verified receipt document or link"
+                $btnRec.Add_Click({
+                    $targetSt = $this.Tag
+                    if (-not $targetSt -or -not $script:activeCourse) { return }
+
+                    $localFile = Find-LocalReceiptFile -Course $script:activeCourse -Student $targetSt
+                    if ($localFile -and (Test-Path -LiteralPath $localFile)) {
+                        try {
+                            [System.Diagnostics.Process]::Start([System.Diagnostics.ProcessStartInfo]@{
+                                FileName = $localFile
+                                UseShellExecute = $true
+                            }) | Out-Null
+                        } catch {
+                            [System.Windows.MessageBox]::Show("Unable to open receipt file:`n$_", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+                        }
+                    } elseif ($targetSt.ProofUrl -and $targetSt.ProofUrl.Trim()) {
+                        try {
+                            [System.Diagnostics.Process]::Start([System.Diagnostics.ProcessStartInfo]@{
+                                FileName = $targetSt.ProofUrl.Trim()
+                                UseShellExecute = $true
+                            }) | Out-Null
+                        } catch {
+                            [System.Windows.MessageBox]::Show("Unable to open receipt URL:`n$_", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+                        }
+                    } else {
+                        [System.Windows.MessageBox]::Show(
+                            "No local receipt file or online proof URL found for $($targetSt.Name) ($($targetSt.RollNo)).",
+                            "Receipt Not Found",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Warning
+                        )
+                    }
+                })
+                $null = $spReceipt.Children.Add($btnRec)
+                [System.Windows.Controls.Grid]::SetColumn($spReceipt, 3)
+                $null = $rowGrid.Children.Add($spReceipt)
+
+                # Column 4: Actions (Unapprove / Undo Button)
+                $spActions = New-Object System.Windows.Controls.StackPanel
+                $spActions.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+                $spActions.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+                $spActions.VerticalAlignment   = [System.Windows.VerticalAlignment]::Center
+                [System.Windows.Controls.Grid]::SetColumn($spActions, 4)
+
+                $btnUnapprove = New-Object System.Windows.Controls.Button
+                $btnUnapprove.Padding = New-Object System.Windows.Thickness(10, 4, 10, 4)
+                $btnUnapprove.FontSize = 11
+                $btnUnapprove.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $btnUnapprove.Cursor = [System.Windows.Input.Cursors]::Hand
+                $btnUnapprove.Tag = $st
+
+                if ($isStaged) {
+                    $undoArrow = [char]0x21A9
+                    $btnUnapprove.Content    = "$undoArrow Undo"
+                    $btnUnapprove.Style      = [System.Windows.Application]::Current.FindResource("BtnPrimary")
+                    $btnUnapprove.Background = [System.Windows.Application]::Current.FindResource("DangerBrush")
+                    $btnUnapprove.Foreground = [System.Windows.Application]::Current.FindResource("BgBrush")
+                    $btnUnapprove.ToolTip    = "Cancel staged unapproval and restore status to Verified"
+                } else {
+                    $rotArrow = [char]0x21BA
+                    $btnUnapprove.Content    = "$rotArrow Unapprove"
+                    $btnUnapprove.Style      = [System.Windows.Application]::Current.FindResource("BtnSecondary")
+                    $btnUnapprove.BorderBrush = [System.Windows.Application]::Current.FindResource("DangerBrush")
+                    $btnUnapprove.Foreground  = [System.Windows.Application]::Current.FindResource("DangerBrush")
+                    $btnUnapprove.ToolTip    = "Stage this student to be reverted back to Under Review"
+                }
+
+                $btnUnapprove.Add_Click({
+                    $targetSt = $this.Tag
+                    if (-not $targetSt -or -not $script:activeCourse) { return }
+
+                    $stKey  = if ($targetSt.RollNo) { [string]$targetSt.RollNo } else { [string]$targetSt.Email }
+                    $stName = if ($targetSt.Name) { [string]$targetSt.Name } else { "this student" }
+                    $stRoll = if ($targetSt.RollNo) { [string]$targetSt.RollNo } else { "No Roll No" }
+
+                    if ($script:stage1VerifiedStagedUnapproved.ContainsKey($stKey)) {
+                        # Undo unapprove
+                        $null = $script:stage1VerifiedStagedUnapproved.Remove($stKey)
+                        Update-StudentListView -Course $script:activeCourse
+                    } else {
+                        # Prompt and stage unapprove
+                        $confirm = [System.Windows.MessageBox]::Show(
+                            "Stage unapproval for:`n`nName: $stName`nRoll No: $stRoll`n`nStatus will be changed to 'Under Review' when changes are pushed to the main sheet.",
+                            "Unapprove Student",
+                            [System.Windows.MessageBoxButton]::YesNo,
+                            [System.Windows.MessageBoxImage]::Question
+                        )
+                        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+                        $origStatus  = "Verified"
+                        $origRemarks = if ($targetSt.VerificationRemarks) { [string]$targetSt.VerificationRemarks } else { "" }
+                        $nowStr      = (Get-Date).ToString("dd/MM/yyyy HH:mm")
+                        $newRemarks  = "Unapproved by coordinator on $nowStr"
+
+                        $script:stage1VerifiedStagedUnapproved[$stKey] = @{
+                            Student         = $targetSt
+                            RollNo          = $targetSt.RollNo
+                            Email           = $targetSt.Email
+                            NewStatus       = "Under Review"
+                            NewRemarks      = $newRemarks
+                            OriginalStatus  = $origStatus
+                            OriginalRemarks = $origRemarks
+                        }
+
+                        Update-StudentListView -Course $script:activeCourse
+                    }
+                })
+
+                $null = $spActions.Children.Add($btnUnapprove)
+                $null = $rowGrid.Children.Add($spActions)
+
+                $cardBorder.Child = $rowGrid
+                $null = $hostPanel.Children.Add($cardBorder)
+            }
+        } else {
+            if ($emptyNotice) { $emptyNotice.Visibility = [System.Windows.Visibility]::Visible }
+        }
+    }
+}
+
+function Open-StudentListView {
+    if (-not $script:activeCourse) {
+        [System.Windows.MessageBox]::Show(
+            "Please select or register a course first.",
+            "Notice",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information
+        )
+        return
+    }
+    $script:stage1VerifiedCurrentPage = 1
+    $script:stage1VerifiedSearchQuery = ""
+    $slv = Get-OrCreateView "StudentListView"
+    if ($slv) {
+        $txtSearch = $slv.FindName("TxtSearchVerifiedStudent")
+        if ($txtSearch) { $txtSearch.Text = "" }
+    }
+    Update-StudentListView -Course $script:activeCourse
+    Navigate-To "StudentListView"
 }
 
 # =====================================================================
@@ -4885,6 +5431,151 @@ function Wire-ViewEvents {
                 $btnBrowseFromHome.Add_Click({ Navigate-To "CoursesView" })
             }
 
+            # Google Forms Open & Copy Actions
+            $btnOpenStage1 = $viewObj.FindName("BtnOpenStage1Form")
+            if ($btnOpenStage1) {
+                $btnOpenStage1.Add_Click({
+                    $links = Get-FormLinks
+                    Start-UrlInBrowser $links.Stage1FormUrl
+                })
+            }
+
+            $btnCopyStage1 = $viewObj.FindName("BtnCopyStage1Form")
+            if ($btnCopyStage1) {
+                $btnCopyStage1.Add_Click({
+                    $links = Get-FormLinks
+                    [System.Windows.Clipboard]::SetText([string]$links.Stage1FormUrl)
+                    $checkToken = [string][char]0x2713
+                    $clipToken  = [string][char]0x1F4CB
+                    $this.Content = "$checkToken Copied!"
+                    $btn = $this
+                    $timer = New-Object System.Windows.Threading.DispatcherTimer
+                    $timer.Interval = [TimeSpan]::FromSeconds(2)
+                    $timer.Add_Tick({
+                        $btn.Content = "$clipToken Copy Link"
+                        $timer.Stop()
+                    })
+                    $timer.Start()
+                })
+            }
+
+            $btnOpenStage2 = $viewObj.FindName("BtnOpenStage2Form")
+            if ($btnOpenStage2) {
+                $btnOpenStage2.Add_Click({
+                    $links = Get-FormLinks
+                    Start-UrlInBrowser $links.Stage2FormUrl
+                })
+            }
+
+            $btnCopyStage2 = $viewObj.FindName("BtnCopyStage2Form")
+            if ($btnCopyStage2) {
+                $btnCopyStage2.Add_Click({
+                    $links = Get-FormLinks
+                    [System.Windows.Clipboard]::SetText([string]$links.Stage2FormUrl)
+                    $checkToken = [string][char]0x2713
+                    $clipToken  = [string][char]0x1F4CB
+                    $this.Content = "$checkToken Copied!"
+                    $btn = $this
+                    $timer = New-Object System.Windows.Threading.DispatcherTimer
+                    $timer.Interval = [TimeSpan]::FromSeconds(2)
+                    $timer.Add_Tick({
+                        $btn.Content = "$clipToken Copy Link"
+                        $timer.Stop()
+                    })
+                    $timer.Start()
+                })
+            }
+
+            # Toggle Instructions & Guidelines Panel
+            $btnToggleGuide = $viewObj.FindName("BtnViewFormGuidelines")
+            if ($btnToggleGuide) {
+                $btnToggleGuide.Add_Click({
+                    $v = $script:views["HomeView"]
+                    $panel = if ($v) { $v.FindName("PanelFormInstructions") } else { $null }
+                    $btn = $this
+                    if ($panel -and $btn) {
+                        $infoToken = [string][char]0x2139
+                        $downToken = [string][char]0x25BE
+                        $upToken   = [string][char]0x25B4
+                        if ($panel.Visibility -eq [System.Windows.Visibility]::Visible) {
+                            $panel.Visibility = [System.Windows.Visibility]::Collapsed
+                            $btn.Content = "$infoToken View Student Instructions $downToken"
+                        } else {
+                            $panel.Visibility = [System.Windows.Visibility]::Visible
+                            $btn.Content = "$infoToken Hide Student Instructions $upToken"
+                        }
+                    }
+                })
+            }
+
+            $btnCloseGuide = $viewObj.FindName("BtnCloseFormInstructions")
+            if ($btnCloseGuide) {
+                $btnCloseGuide.Add_Click({
+                    $v = $script:views["HomeView"]
+                    $panel = if ($v) { $v.FindName("PanelFormInstructions") } else { $null }
+                    $toggleBtn = if ($v) { $v.FindName("BtnViewFormGuidelines") } else { $null }
+                    if ($panel) { $panel.Visibility = [System.Windows.Visibility]::Collapsed }
+                    if ($toggleBtn) {
+                        $infoToken = [string][char]0x2139
+                        $downToken = [string][char]0x25BE
+                        $toggleBtn.Content = "$infoToken View Student Instructions $downToken"
+                    }
+                })
+            }
+
+            # Copy Stage 1 Instructions Text
+            $btnCopyInst1 = $viewObj.FindName("BtnCopyStage1Instructions")
+            if ($btnCopyInst1) {
+                $btnCopyInst1.Add_Click({
+                    $bullet = [string][char]0x2022
+                    $rupee = [string][char]0x20B9
+                    $txt = "INSTRUCTIONS FOR RECEIPT UPLOAD:`r`n" +
+                           "$bullet File Name: <EnrollmentNumber>_receipt.pdf (or .jpg / .png)`r`n" +
+                           "$bullet Fee Amount: Must clearly show $rupee 1,000 / $rupee 1,100 / $rupee 500`r`n" +
+                           "$bullet Status: Must show 'Payment Successful' (NOT Pending)`r`n" +
+                           "$bullet Valid Proof: Official Swayam/NPTEL receipt or Razorpay invoice only`r`n" +
+                           "$bullet Drive Links: Set to 'Anyone with the link can view'"
+                    [System.Windows.Clipboard]::SetText($txt)
+                    $checkToken = [string][char]0x2713
+                    $clipToken  = [string][char]0x1F4CB
+                    $this.Content = "$checkToken Notice Copied!"
+                    $btn = $this
+                    $timer = New-Object System.Windows.Threading.DispatcherTimer
+                    $timer.Interval = [TimeSpan]::FromSeconds(2)
+                    $timer.Add_Tick({
+                        $btn.Content = "$clipToken Copy Stage 1 Notice Text"
+                        $timer.Stop()
+                    })
+                    $timer.Start()
+                })
+            }
+
+            # Copy Stage 2 Instructions Text
+            $btnCopyInst2 = $viewObj.FindName("BtnCopyStage2Instructions")
+            if ($btnCopyInst2) {
+                $btnCopyInst2.Add_Click({
+                    $bullet = [string][char]0x2022
+                    $txt = "INSTRUCTIONS FOR CERTIFICATE UPLOAD:`r`n" +
+                           "$bullet File Name: <EnrollmentNumber>_Certificate.pdf (or .jpeg / .png)`r`n" +
+                           "$bullet Marks Entry: Exact printed values for Assign (/25), Exam (/75), and Total (/100)`r`n" +
+                           "$bullet Do NOT round off numbers manually (enter 24.67, NOT 25)`r`n" +
+                           "$bullet Valid Proof: Official e-Certificate only (No hall tickets)`r`n" +
+                           "$bullet Drive Links: Set to 'Anyone with the link can view'"
+                    [System.Windows.Clipboard]::SetText($txt)
+                    $checkToken = [string][char]0x2713
+                    $clipToken  = [string][char]0x1F4CB
+                    $this.Content = "$checkToken Notice Copied!"
+                    $btn = $this
+                    $timer = New-Object System.Windows.Threading.DispatcherTimer
+                    $timer.Interval = [TimeSpan]::FromSeconds(2)
+                    $timer.Add_Tick({
+                        $btn.Content = "$clipToken Copy Stage 2 Notice Text"
+                        $timer.Stop()
+                    })
+                    $timer.Start()
+                })
+            }
+
             Refresh-CourseLists
         }
 
@@ -5670,15 +6361,16 @@ function Wire-ViewEvents {
             $cardVerified = $viewObj.FindName("CardVerStatVerified")
             if ($cardVerified) {
                 $cardVerified.Add_MouseLeftButtonUp({
-                    $dv = $script:views["Stage1View"]
-                    $txt = if ($dv) { $dv.FindName("TxtVerStatVerified") } else { $null }
-                    $count = if ($txt) { $txt.Text } else { "0" }
-                    [System.Windows.MessageBox]::Show(
-                        "Verified Students: $count`n`nIn Phase F, clicking this card will open the filtered student roster showing all verified students with export options.",
-                        "Verified Students",
-                        [System.Windows.MessageBoxButton]::OK,
-                        [System.Windows.MessageBoxImage]::Information
-                    )
+                    if (-not $script:activeCourse) {
+                        [System.Windows.MessageBox]::Show(
+                            "Please select or register a course first.",
+                            "Notice",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Information
+                        )
+                        return
+                    }
+                    Open-StudentListView
                 })
             }
 
@@ -6376,7 +7068,7 @@ function Wire-ViewEvents {
                 })
             }
 
-            # ─────────────────────────────────────────────────────────────
+            # =============================================================
             # 0. Configure Sheet Header Info Modal
             $btnEditHeader = $viewObj.FindName("BtnEditCollegeHeaderInfo")
             if ($btnEditHeader) {
@@ -8775,6 +9467,172 @@ function Wire-ViewEvents {
                 })
             }
         }
+
+        "StudentListView" {
+            # 1. Back button to Stage 1 (top right)
+            $btnBack = $viewObj.FindName("BtnBackToStage1FromStudentList")
+            if ($btnBack) {
+                $btnBack.Add_Click({
+                    Navigate-To "Stage1View"
+                })
+            }
+
+            # 2. Search Box live filter
+            $txtSearch = $viewObj.FindName("TxtSearchVerifiedStudent")
+            if ($txtSearch) {
+                $txtSearch.Add_TextChanged({
+                    $script:stage1VerifiedSearchQuery = $this.Text
+                    $script:stage1VerifiedCurrentPage = 1
+                    if ($script:activeCourse) {
+                        Update-StudentListView -Course $script:activeCourse
+                    }
+                })
+            }
+
+            # 3. Pagination Controls
+            $btnPrev = $viewObj.FindName("BtnVerifiedPrevPage")
+            if ($btnPrev) {
+                $btnPrev.Add_Click({
+                    if ($script:stage1VerifiedCurrentPage -gt 1) {
+                        $script:stage1VerifiedCurrentPage--
+                        if ($script:activeCourse) {
+                            Update-StudentListView -Course $script:activeCourse
+                        }
+                    }
+                })
+            }
+
+            $btnNext = $viewObj.FindName("BtnVerifiedNextPage")
+            if ($btnNext) {
+                $btnNext.Add_Click({
+                    $script:stage1VerifiedCurrentPage++
+                    if ($script:activeCourse) {
+                        Update-StudentListView -Course $script:activeCourse
+                    }
+                })
+            }
+
+            # 4. Export CSV
+            $btnExport = $viewObj.FindName("BtnExportVerifiedCsv")
+            if ($btnExport) {
+                $btnExport.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    Export-Stage1VerifiedStudentsCsv -Course $script:activeCourse
+                })
+            }
+
+            # 5. Push Changes to Main Sheet
+            $btnPush = $viewObj.FindName("BtnPushStage1VerifiedChanges")
+            if ($btnPush) {
+                $btnPush.Add_Click({
+                    if (-not $script:activeCourse) { return }
+                    $stagedCount = $script:stage1VerifiedStagedUnapproved.Count
+                    if ($stagedCount -le 0) {
+                        [System.Windows.MessageBox]::Show(
+                            "There are no unapproved student changes staged.",
+                            "Notice",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Information
+                        )
+                        return
+                    }
+
+                    $cName = if ($script:activeCourse.Name) { [string]$script:activeCourse.Name } else { "Default" }
+                    $targetExcel = if ($script:activeCourse.VerificationSheet) { [string]$script:activeCourse.VerificationSheet } else { "$cName Verification Sheet" }
+                    $plural = if ($stagedCount -eq 1) { "1 unapproved student" } else { "$stagedCount unapproved students" }
+
+                    $confirm = [System.Windows.MessageBox]::Show(
+                        "Push $plural to Main Sheet?`n`n" +
+                        "Course: $cName`n" +
+                        "Target: $targetExcel`n`n" +
+                        "This will change their status to 'Under Review', commit the student roster, and update the verification spreadsheet.",
+                        "Push Changes to Main Sheet",
+                        [System.Windows.MessageBoxButton]::YesNo,
+                        [System.Windows.MessageBoxImage]::Question
+                    )
+                    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+                    $origCursor = [System.Windows.Input.Mouse]::OverrideCursor
+                    try {
+                        [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
+
+                        $store = Get-CourseStudentStore -CourseId $script:activeCourse.Id -RegistrationSheet $script:activeCourse.RegistrationSheet -CourseName $cName
+                        $students = [System.Collections.ArrayList]@($store.Students)
+
+                        # Apply all staged unapprovals
+                        $nowStr = (Get-Date).ToString("dd/MM/yyyy HH:mm")
+                        foreach ($entry in $script:stage1VerifiedStagedUnapproved.Values) {
+                            $eRoll = if ($entry.RollNo) { [string]$entry.RollNo } else { "" }
+                            $eEmail = if ($entry.Email) { [string]$entry.Email } else { "" }
+
+                            foreach ($s in $students) {
+                                $match = $false
+                                if ($eRoll -and $s.RollNo -and ($s.RollNo.Trim().ToLower() -eq $eRoll.Trim().ToLower())) {
+                                    $match = $true
+                                } elseif ($eEmail -and $s.Email -and ($s.Email.Trim().ToLower() -eq $eEmail.Trim().ToLower())) {
+                                    $match = $true
+                                }
+
+                                if ($match) {
+                                    $s.VerificationStatus = "Under Review"
+                                    $s.VerificationRemarks = "Unapproved by coordinator on $nowStr"
+                                    break
+                                }
+                            }
+                        }
+
+                        # 1. Save students.json
+                        Save-CourseStudents -CourseId $script:activeCourse.Id -Students $students -ColumnMap $store.ColumnMap -CourseName $cName
+
+                        # 2. Export / Sync Verification Excel Sheet
+                        Export-CourseVerificationSheetData -Course $script:activeCourse -Students $students
+
+                        # 3. Clear staged unapprovals
+                        $committedCount = $script:stage1VerifiedStagedUnapproved.Count
+                        $script:stage1VerifiedStagedUnapproved.Clear()
+
+                        # 4. Refresh Stage 1 View metrics in background
+                        $s1View = if ($script:views.ContainsKey("Stage1View")) { $script:views["Stage1View"] } else { $null }
+                        if ($s1View) {
+                            $verCount = @($students | Where-Object { $_.VerificationStatus -eq "Verified" }).Count
+                            $revCount = @($students | Where-Object { $_.VerificationStatus -eq "Under Review" }).Count
+                            $unregCount = @($students | Where-Object { $_.VerificationStatus -eq "Did Not Register" }).Count
+
+                            $txtVer = $s1View.FindName("TxtVerStatVerified")
+                            $txtRev = $s1View.FindName("TxtVerStatReview")
+                            $txtUnr = $s1View.FindName("TxtVerStatUnreg")
+                            $txtSum = $s1View.FindName("TxtVerificationSheetSummary")
+
+                            if ($txtVer) { $txtVer.Text = $verCount.ToString() }
+                            if ($txtRev) { $txtRev.Text = $revCount.ToString() }
+                            if ($txtUnr) { $txtUnr.Text = $unregCount.ToString() }
+                            if ($txtSum) {
+                                $txtSum.Text = "$($students.Count) Students | $verCount Verified, $revCount Under Review, $unregCount Did Not Register"
+                            }
+                        }
+
+                        # 5. Refresh Student List View
+                        Update-StudentListView -Course $script:activeCourse -Students $students
+
+                        [System.Windows.MessageBox]::Show(
+                            "Successfully unapproved $committedCount student(s) and synced main sheet!`n`nThey have been moved back to 'Under Review' and are visible in the Review queue.",
+                            "Changes Pushed Successfully",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Information
+                        )
+                    } catch {
+                        [System.Windows.MessageBox]::Show(
+                            "Failed to push changes:`n$($_.Exception.Message)",
+                            "Push Error",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Error
+                        )
+                    } finally {
+                        [System.Windows.Input.Mouse]::OverrideCursor = $origCursor
+                    }
+                })
+            }
+        }
     }
 }
 
@@ -8795,8 +9653,7 @@ function Navigate-To {
     $defaultStyle = [System.Windows.Application]::Current.FindResource("BtnNav")
 
     if ($NavBtnHome) { $NavBtnHome.Style = if ($ViewName -eq "HomeView") { $activeStyle } else { $defaultStyle } }
-    if ($NavBtnCourses) { $NavBtnCourses.Style = if ($ViewName -eq "CoursesView" -or $ViewName -eq "WorkspaceView" -or $ViewName -eq "Stage1View" -or $ViewName -eq "Stage2View" -or $ViewName -eq "ReviewView" -or $ViewName -eq "ExamReviewView" -or $ViewName -eq "EmailView" -or $ViewName -eq "ExamVerifiedView") { $activeStyle } else { $defaultStyle } }
-    if ($NavBtnSettings) { $NavBtnSettings.Style = if ($ViewName -eq "SettingsView") { $activeStyle } else { $defaultStyle } }
+    if ($NavBtnCourses) { $NavBtnCourses.Style = if ($ViewName -eq "CoursesView" -or $ViewName -eq "WorkspaceView" -or $ViewName -eq "Stage1View" -or $ViewName -eq "Stage2View" -or $ViewName -eq "ReviewView" -or $ViewName -eq "ExamReviewView" -or $ViewName -eq "EmailView" -or $ViewName -eq "ExamVerifiedView" -or $ViewName -eq "StudentListView") { $activeStyle } else { $defaultStyle } }
 
     if ($ViewName -eq "Stage2View" -and $script:activeCourse) {
         Update-Stage2View -Course $script:activeCourse
@@ -8804,6 +9661,8 @@ function Navigate-To {
         Update-ExamReviewView -Course $script:activeCourse
     } elseif ($ViewName -eq "ExamVerifiedView" -and $script:activeCourse) {
         Update-ExamVerifiedView -Course $script:activeCourse
+    } elseif ($ViewName -eq "StudentListView" -and $script:activeCourse) {
+        Update-StudentListView -Course $script:activeCourse
     }
 
     Refresh-CourseLists
@@ -8812,17 +9671,6 @@ function Navigate-To {
 # 12. Attach Navigation Bar Events
 if ($NavBtnHome) { $NavBtnHome.Add_Click({ Navigate-To "HomeView" }) }
 if ($NavBtnCourses) { $NavBtnCourses.Add_Click({ Navigate-To "CoursesView" }) }
-if ($NavBtnSettings) { $NavBtnSettings.Add_Click({ Navigate-To "SettingsView" }) }
-
-if ($BtnHeaderSync) {
-    $BtnHeaderSync.Add_Click({
-        if ($script:activeCourse) {
-            [System.Windows.MessageBox]::Show("Synchronizing student sheets for '$($script:activeCourse.Name)'...", "Sync Status", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-        } else {
-            [System.Windows.MessageBox]::Show("No active course selected to sync. Please select or add a course first.", "Sync Notice", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-        }
-    })
-}
 
 # 13. Initial Route: Home View (Course Setup & Launcher)
 Navigate-To "HomeView"

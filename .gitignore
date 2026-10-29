@@ -67,3 +67,6 @@ Output/
 _build/
 bin/
 obj/
+dist/
+*.exe
+*.zip

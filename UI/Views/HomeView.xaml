@@ -155,53 +155,309 @@
                     </Border>
                 </Grid>
 
-                <!-- Two-Stage Semester Lifecycle Banner -->
+                <!-- ======================================================== -->
+                <!-- GOOGLE FORM TEMPLATES & DATA COLLECTION (STAGE 1 & 2)    -->
+                <!-- ======================================================== -->
                 <Border Background="{DynamicResource PanelBrush}"
                         BorderBrush="{DynamicResource BorderBrush}"
                         BorderThickness="1"
                         CornerRadius="10"
-                        Padding="24">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="1"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
+                        Padding="24"
+                        Margin="0,0,0,16">
+                    <StackPanel>
+                        <!-- Section Header -->
+                        <Grid Margin="0,0,0,20">
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="DATA COLLECTION &amp; FORM TEMPLATES"
+                                           FontFamily="IBM Plex Mono, Consolas"
+                                           FontSize="11"
+                                           FontWeight="Medium"
+                                           Foreground="{DynamicResource AccentBrush}"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock Text="NPTEL Student Forms"
+                                           FontFamily="IBM Plex Mono, Consolas"
+                                           FontSize="19"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextBrush}"/>
+                            </StackPanel>
+                            <Button x:Name="BtnViewFormGuidelines"
+                                    Content="&#x2139; View Student Instructions &#x25BE;"
+                                    Style="{DynamicResource BtnSecondary}"
+                                    Padding="14,7"
+                                    FontSize="11"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"/>
+                        </Grid>
 
-                        <!-- Stage 1 -->
-                        <Border Grid.Column="0" Padding="14,4">
+                        <!-- Two Form Cards: Stage 1 and Stage 2 -->
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Card 1: Stage 1 Registration & Receipt Form -->
+                            <Border Grid.Column="0"
+                                    Background="{DynamicResource Panel2Brush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="20">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <!-- Stage 1 Pill & Status -->
+                                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Border Background="{DynamicResource AccentTintBrush}" CornerRadius="4" Padding="7,3" Margin="0,0,8,0">
+                                            <TextBlock Text="STAGE 1: REGISTRATION" FontFamily="IBM Plex Mono" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}"/>
+                                        </Border>
+                                    </StackPanel>
+
+                                    <!-- Title -->
+                                    <TextBlock Grid.Row="1"
+                                               Text="Registration &amp; Enrollment Form"
+                                               FontFamily="IBM Plex Mono, Consolas"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextBrush}"
+                                               Margin="0,0,0,8"/>
+
+                                    <!-- Description -->
+                                    <TextBlock Grid.Row="2"
+                                               Text="Collects student roll numbers, elective choices, payment status, and fee receipts at the beginning of the semester."
+                                               FontSize="12"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,16"/>
+
+                                    <!-- Key Schema Tags -->
+                                    <WrapPanel Grid.Row="3" Margin="0,0,0,18">
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Enrollment No" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Student Name" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Subject / Elective" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Fee Amount (&#x20B9;1000/500)" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Receipt PDF / Image" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource SageBrush}"/>
+                                        </Border>
+                                    </WrapPanel>
+
+                                    <!-- Action Buttons -->
+                                    <Grid Grid.Row="4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button x:Name="BtnOpenStage1Form"
+                                                Grid.Column="0"
+                                                Content="&#x1F517; Open Form"
+                                                Style="{DynamicResource BtnPrimary}"
+                                                Padding="14,9"
+                                                FontSize="12"
+                                                ToolTip="Open the Stage 1 Registration Google Form in your browser"/>
+                                        <Button x:Name="BtnCopyStage1Form"
+                                                Grid.Column="2"
+                                                Content="&#x1F4CB; Copy Link"
+                                                Style="{DynamicResource BtnSecondary}"
+                                                Padding="12,9"
+                                                FontSize="12"
+                                                ToolTip="Copy Stage 1 Google Form link to clipboard"/>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+
+                            <!-- Card 2: Stage 2 Exam Results & Certificate Form -->
+                            <Border Grid.Column="2"
+                                    Background="{DynamicResource Panel2Brush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="20">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <!-- Stage 2 Pill & Status -->
+                                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Border Background="{DynamicResource SageTintBrush}" CornerRadius="4" Padding="7,3" Margin="0,0,8,0">
+                                            <TextBlock Text="STAGE 2: RESULTS" FontFamily="IBM Plex Mono" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource SageBrush}"/>
+                                        </Border>
+                                    </StackPanel>
+
+                                    <!-- Title -->
+                                    <TextBlock Grid.Row="1"
+                                               Text="NPTEL Result &amp; Certificate Form"
+                                               FontFamily="IBM Plex Mono, Consolas"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextBrush}"
+                                               Margin="0,0,0,8"/>
+
+                                    <!-- Description -->
+                                    <TextBlock Grid.Row="2"
+                                               Text="Collects e-certificates and exact printed marks (Assignment /25, Exam /75, Total /100) after exam results are released."
+                                               FontSize="12"
+                                               Foreground="{DynamicResource MutedBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,16"/>
+
+                                    <!-- Key Schema Tags -->
+                                    <WrapPanel Grid.Row="3" Margin="0,0,0,18">
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Enrollment No" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Candidate Name" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Assign (/25)" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Exam (/75)" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Total (/100)" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                        </Border>
+                                        <Border Background="{DynamicResource PanelModBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,0,6,6">
+                                            <TextBlock Text="Certificate (PDF/JPG)" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource SageBrush}"/>
+                                        </Border>
+                                    </WrapPanel>
+
+                                    <!-- Action Buttons -->
+                                    <Grid Grid.Row="4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button x:Name="BtnOpenStage2Form"
+                                                Grid.Column="0"
+                                                Content="&#x1F517; Open Form"
+                                                Style="{DynamicResource BtnPrimary}"
+                                                Padding="14,9"
+                                                FontSize="12"
+                                                ToolTip="Open the Stage 2 Result Google Form in your browser"/>
+                                        <Button x:Name="BtnCopyStage2Form"
+                                                Grid.Column="2"
+                                                Content="&#x1F4CB; Copy Link"
+                                                Style="{DynamicResource BtnSecondary}"
+                                                Padding="12,9"
+                                                FontSize="12"
+                                                ToolTip="Copy Stage 2 Google Form link to clipboard"/>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <!-- Expandable Guidelines & Student Instructions Panel -->
+                        <Border x:Name="PanelFormInstructions"
+                                Visibility="Collapsed"
+                                Background="{DynamicResource Panel2Brush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="18"
+                                Margin="0,12,0,0">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                    <Border Background="{DynamicResource AccentTintBrush}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0">
-                                        <TextBlock Text="STAGE 1: NOW" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource AccentBrush}"/>
+                                <Grid Margin="0,0,0,12">
+                                    <TextBlock Text="RECOMMENDED STUDENT INSTRUCTIONS FOR FORMS"
+                                               FontFamily="IBM Plex Mono, Consolas"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <Button x:Name="BtnCloseFormInstructions"
+                                            Content="&#x2715; Close"
+                                            Style="{DynamicResource BtnSecondary}"
+                                            Padding="10,4"
+                                            FontSize="10"
+                                            HorizontalAlignment="Right"/>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="14"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Stage 1 Instructions Card -->
+                                    <Border Grid.Column="0"
+                                            Background="{DynamicResource PanelModBrush}"
+                                            BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="14">
+                                        <StackPanel>
+                                            <TextBlock Text="Stage 1: Receipt Upload Rules"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource TextBrush}"
+                                                       Margin="0,0,0,8"/>
+                                            <TextBlock Text="&#x2022; File Name: &lt;Enrollment&gt;_receipt.pdf (or .jpg / .png)&#x0a;&#x2022; Fee Amount: Clearly show &#x20B9;1,000 / &#x20B9;1,100 / &#x20B9;500&#x0a;&#x2022; Status: Must state 'Payment Successful'&#x0a;&#x2022; Valid Proof: Official Swayam receipt or Razorpay invoice"
+                                                       FontSize="11"
+                                                       LineHeight="18"
+                                                       Foreground="{DynamicResource MutedBrush}"
+                                                       Margin="0,0,0,10"/>
+                                            <Button x:Name="BtnCopyStage1Instructions"
+                                                    Content="&#x1F4CB; Copy Stage 1 Notice Text"
+                                                    Style="{DynamicResource BtnSecondary}"
+                                                    Padding="8,5"
+                                                    FontSize="11"
+                                                    HorizontalAlignment="Left"/>
+                                        </StackPanel>
                                     </Border>
-                                    <TextBlock Text="Registration &amp; Verification" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource TextBrush}"/>
-                                </StackPanel>
-                                <TextBlock Text="Upload the initial student registration sheet to verify elective choices, payment receipts, and flag mismatches."
-                                           FontSize="12"
-                                           Foreground="{DynamicResource MutedBrush}"
-                                           TextWrapping="Wrap"/>
+
+                                    <!-- Stage 2 Instructions Card -->
+                                    <Border Grid.Column="2"
+                                            Background="{DynamicResource PanelModBrush}"
+                                            BorderBrush="{DynamicResource BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="14">
+                                        <StackPanel>
+                                            <TextBlock Text="Stage 2: Certificate Upload Rules"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource TextBrush}"
+                                                       Margin="0,0,0,8"/>
+                                            <TextBlock Text="&#x2022; File Name: &lt;Enrollment&gt;_Certificate.pdf (or .jpeg / .png)&#x0a;&#x2022; Marks Entry: Exact printed values for Assign (/25), Exam (/75), Total (/100)&#x0a;&#x2022; No Rounding: Enter 24.67 (NOT 25)&#x0a;&#x2022; Valid Proof: Official e-Certificate only (No hall tickets)"
+                                                       FontSize="11"
+                                                       LineHeight="18"
+                                                       Foreground="{DynamicResource MutedBrush}"
+                                                       Margin="0,0,0,10"/>
+                                            <Button x:Name="BtnCopyStage2Instructions"
+                                                    Content="&#x1F4CB; Copy Stage 2 Notice Text"
+                                                    Style="{DynamicResource BtnSecondary}"
+                                                    Padding="8,5"
+                                                    FontSize="11"
+                                                    HorizontalAlignment="Left"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
                             </StackPanel>
                         </Border>
-
-                        <Border Grid.Column="1" Background="{DynamicResource BorderBrush}"/>
-
-                        <!-- Stage 2 -->
-                        <Border Grid.Column="2" Padding="18,4">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                    <Border Background="{DynamicResource Panel2Brush}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0">
-                                        <TextBlock Text="STAGE 2: IN 5-6 MONTHS" FontFamily="IBM Plex Mono" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
-                                    </Border>
-                                    <TextBlock Text="Exam Results &amp; Credits" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource TextBrush}"/>
-                                </StackPanel>
-                                <TextBlock Text="After students take the NPTEL exam, upload the official results sheet to auto-generate the college credit &amp; grade sheet."
-                                           FontSize="12"
-                                           Foreground="{DynamicResource MutedBrush}"
-                                           TextWrapping="Wrap"/>
-                            </StackPanel>
-                        </Border>
-                    </Grid>
+                    </StackPanel>
                 </Border>
             </StackPanel>
 
