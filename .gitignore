@@ -67,6 +67,9 @@ Output/
 _build/
 bin/
 obj/
-dist/
 *.exe
 *.zip
+
+# Allow portable distribution folder and coordinator zip
+!dist/
+!dist/**
